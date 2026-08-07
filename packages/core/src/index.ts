@@ -6,4 +6,5 @@ export * from './fees';
 export * from './pnl';
 export * from './scoring';
 export * from './coaching';
+export * from './chain';
 export * from './format';

@@ -11,7 +11,7 @@
  *   cash + costBasis(open) - realized == startingBalance
  */
 
-import type { OutcomeSide, OrderSide, SimRealism } from '@polyfill/core';
+import type { ChainLink, OutcomeSide, OrderSide, SimRealism } from '@polyfill/core';
 
 export const STARTING_BALANCE = 10_000;
 const KEY = 'polyfill.v1';
@@ -128,6 +128,15 @@ export interface LocalState {
   orders: StoredOrder[];
   transactions: StoredTxn[];
   watchlist: WatchedMarket[];
+  /**
+   * Hash chain over every balance-changing event.
+   *
+   * Locally this is tamper-EVIDENCE: it proves the record was not edited
+   * outside the app, and proves nothing to anyone else — someone who controls
+   * the whole history can rebuild a consistent chain from forged numbers. That
+   * is precisely why ladder links are minted server-side instead.
+   */
+  chain: ChainLink[];
   settings: Settings;
 }
 
@@ -168,6 +177,7 @@ export function freshState(): LocalState {
         memo: 'Opening balance',
       },
     ],
+    chain: [],
     settings: { ...DEFAULT_SETTINGS },
   };
 }
@@ -194,6 +204,7 @@ export async function loadState(): Promise<LocalState> {
   // undefined on an existing install.
   stored.settings = { ...DEFAULT_SETTINGS, ...stored.settings };
   stored.watchlist ??= [];
+  stored.chain ??= [];
   return stored;
 }
 

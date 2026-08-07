@@ -166,3 +166,69 @@ h3.section {
 button.action.small { font-size: 11px; padding: 6px; }
 
 .empty .note { margin-top: 10px; max-width: 260px; margin-inline: auto; }
+
+/* ── Ladder ─────────────────────────────────────────────────────────────── */
+
+.lbHead { display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px; gap: 8px; }
+.lbHead h2 { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+
+.segmented { display: inline-flex; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 2px; }
+.segmented button { background: none; border: 0; color: var(--muted); font: inherit;
+  font-size: 10.5px; font-weight: 600; padding: 4px 9px; border-radius: 6px; cursor: pointer; }
+.segmented button[aria-selected='true'] { background: var(--brand); color: #fff; }
+
+/* Podium: 2nd | 1st | 3rd, with 1st raised so hierarchy reads before numbers. */
+.podium { display: grid; grid-template-columns: 1fr 1.14fr 1fr; gap: 7px;
+  align-items: end; margin-bottom: 14px; }
+.plinth { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 11px 7px; text-align: center; display: grid; gap: 2px; justify-items: center;
+  position: relative; }
+.plinth.ghosted { background: transparent; border-style: dashed; min-height: 96px; }
+.plinth.p1 { border-color: #C9A227; background: linear-gradient(180deg,
+  rgba(201,162,39,.14), rgba(201,162,39,.03)); padding-top: 15px; padding-bottom: 15px; }
+.plinth.p2 { border-color: #7D8794; }
+.plinth.p3 { border-color: #B0703A; }
+.plinth.you { box-shadow: 0 0 0 1px var(--brand) inset; }
+
+.plinth .place { font-size: 10px; font-weight: 800; letter-spacing: .06em;
+  text-transform: uppercase; }
+.plinth.p1 .place { color: #E7C349; } .plinth.p2 .place { color: #AEB6C2; }
+.plinth.p3 .place { color: #D08A4E; }
+.plinth .pnl { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; }
+.plinth.p1 .pnl { font-size: 20px; }
+.plinth .pnlLabel { font-size: 8.5px; color: var(--dim); text-transform: uppercase;
+  letter-spacing: .06em; margin-top: -2px; }
+.plinth .who { display: flex; align-items: center; gap: 4px; margin-top: 5px;
+  font-size: 11px; font-weight: 600; max-width: 100%; }
+.plinth .who span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bssTag { font-size: 8.5px; color: var(--muted); border: 1px solid var(--border);
+  border-radius: 4px; padding: 1px 4px; margin-top: 3px; }
+
+.avatar { width: 17px; height: 17px; border-radius: 50%; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 700; color: #fff; }
+
+.table { background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; overflow: hidden; }
+.thead, .trow { display: grid; grid-template-columns: 42px 1fr auto; gap: 8px;
+  align-items: center; padding: 8px 10px; }
+.thead { font-size: 9.5px; color: var(--muted); text-transform: uppercase;
+  letter-spacing: .05em; border-bottom: 1px solid var(--border); font-weight: 600; }
+.trow { border-bottom: 1px solid var(--border); font-size: 12px; }
+.trow:last-child { border-bottom: 0; }
+.trow.you { background: rgba(139,92,246,.09); }
+.trow .rank { color: var(--muted); font-size: 11px; }
+.trow .who { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.trow .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.right { text-align: right; }
+.trow .tag { font-size: 8px; padding: 1px 4px; border-radius: 3px;
+  background: var(--brand); color: #fff; text-transform: uppercase; letter-spacing: .04em; }
+
+.youPin { margin-top: 10px; background: var(--surface); border: 1px solid var(--brand);
+  border-radius: 10px; overflow: hidden; }
+
+button.action.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+button.action.primary:hover { filter: brightness(1.1); }
+button.action:disabled { opacity: .55; cursor: not-allowed; }

@@ -21,13 +21,15 @@ import {
   type Settings,
   type StoredPosition,
 } from '../lib/store';
+import { Leaderboard } from './Leaderboard';
 import './styles.css';
 
-type Tab = 'book' | 'watch' | 'record' | 'history' | 'settings';
+type Tab = 'book' | 'watch' | 'ladder' | 'record' | 'history' | 'settings';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'book', label: 'Book' },
   { id: 'watch', label: 'Watch' },
+  { id: 'ladder', label: 'Ladder' },
   { id: 'record', label: 'Record' },
   { id: 'history', label: 'History' },
   { id: 'settings', label: 'Settings' },
@@ -107,6 +109,7 @@ function App() {
       <main>
         {tab === 'book' && <Book state={state} record={record} />}
         {tab === 'watch' && <Watch state={state} onChange={refresh} />}
+        {tab === 'ladder' && <Leaderboard state={state} onChange={refresh} />}
         {tab === 'record' && <RecordScreen record={record} />}
         {tab === 'history' && <History state={state} />}
         {tab === 'settings' && <SettingsView state={state} onChange={refresh} />}
@@ -675,18 +678,20 @@ function SettingsView({ state, onChange }: { state: LocalState; onChange: () => 
 
       <div className="card">
         <h3>Leaderboard</h3>
-        <Toggle
-          label="Compete on the ladder"
-          desc="Off by default. Solo play is fully local and never leaves your browser."
-          checked={state.settings.competeOptIn}
-          onChange={(v) => void set({ competeOptIn: v })}
-        />
-        <div className="note">
-          <strong>Not wired up yet.</strong> The backend is deployed and tested, but the opt-in
-          flow is deliberately unfinished — this switch currently only records the preference. When
-          it ships you will get an anonymous handle, no email and no password, and eligibility will
-          require 10 trades across 5 markets and 2 categories on an account at least 72 hours old.
-        </div>
+        {state.settings.competeOptIn ? (
+          <>
+            <div className="row">
+              <span className="k">Handle</span>
+              <span className="num">{state.settings.handle ?? '—'}</span>
+            </div>
+            <DeviceKeyReveal deviceKey={state.settings.deviceKey} />
+          </>
+        ) : (
+          <div className="note">
+            You are not competing. Solo play is fully local and never leaves this browser. Open the{' '}
+            <strong>Ladder</strong> tab to read exactly what would be sent and opt in.
+          </div>
+        )}
       </div>
 
       <div className="card">
@@ -743,3 +748,59 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </StrictMode>,
 );
+
+/**
+ * Reveal-and-copy for the device key.
+ *
+ * This string IS the user's leaderboard identity — there is no password reset
+ * and no email to recover from, which is the price of never asking for either.
+ * So it is masked by default and treated like a credential, and the copy button
+ * exists because "write down this 43-character string" is not a real recovery
+ * plan.
+ */
+function DeviceKeyReveal({ deviceKey }: { deviceKey: string | null }) {
+  const [shown, setShown] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  if (!deviceKey) return null;
+
+  return (
+    <>
+      <div className="row" style={{ alignItems: 'flex-start' }}>
+        <span className="k">Device key</span>
+        <span
+          className="num"
+          style={{
+            fontSize: 10,
+            maxWidth: 168,
+            overflowWrap: 'anywhere',
+            textAlign: 'right',
+            color: shown ? 'var(--text)' : 'var(--dim)',
+          }}
+        >
+          {shown ? deviceKey : '•'.repeat(24)}
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+        <button className="action" style={{ fontSize: 11 }} onClick={() => setShown(!shown)}>
+          {shown ? 'Hide' : 'Show'}
+        </button>
+        <button
+          className="action"
+          style={{ fontSize: 11 }}
+          onClick={async () => {
+            await navigator.clipboard.writeText(deviceKey);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1800);
+          }}
+        >
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <div className="note">
+        Save this somewhere safe. Clearing extension storage or moving browsers loses your ladder
+        history unless you paste this key into the new install. There is no password reset.
+      </div>
+    </>
+  );
+}

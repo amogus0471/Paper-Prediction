@@ -78,6 +78,17 @@ mkdirSync(dist, { recursive: true });
 copyFile(resolve(root, 'manifest.json'), resolve(dist, 'manifest.json'));
 copyDir(resolve(root, 'public/icons'), resolve(dist, 'icons'));
 
+// Vite stamps `crossorigin` on every emitted module script and stylesheet.
+// On a chrome-extension:// page that turns a same-origin fetch into an
+// anonymous CORS request, which the extension scheme does not answer — the
+// side panel then renders as a blank white pane with no console error that
+// points at the cause. Strip it.
+{
+  const htmlPath = resolve(dist, 'src/sidepanel/index.html');
+  const html = readFileSync(htmlPath, 'utf8').replace(/\s+crossorigin(?:="[^"]*")?/g, '');
+  writeFileSync(htmlPath, html, 'utf8');
+}
+
 // ── verification ────────────────────────────────────────────────────────────
 // A build that emits a content script Chrome refuses to run is worse than a
 // build that fails, because you only find out after loading it.
@@ -87,6 +98,61 @@ const problems = [];
 const content = readFileSync(resolve(dist, 'src/content/index.js'), 'utf8');
 if (/^\s*import[\s{*'"]/m.test(content) || /^\s*export[\s{*]/m.test(content)) {
   problems.push('content script contains an import/export — Chrome will refuse to run it');
+}
+
+// A syntax error here loads fine and then fails at runtime as "Service worker
+// registration failed (Status code: 15)", which points at nothing useful.
+for (const rel of ['src/background/index.js', 'src/content/index.js', 'assets/sidepanel.js']) {
+  try {
+    // eslint-disable-next-line no-new-func
+    new Function(readFileSync(resolve(dist, rel), 'utf8'));
+  } catch (e) {
+    problems.push(`${rel} has a syntax error: ${e.message}`);
+  }
+}
+
+// Every chrome.* namespace the code touches must be covered by a permission,
+// or the call throws "Cannot read properties of undefined" at runtime.
+const PERMISSION_FOR = {
+  storage: 'storage',
+  sidePanel: 'sidePanel',
+  alarms: 'alarms',
+  notifications: 'notifications',
+  // Always available; no permission required.
+  runtime: null,
+  i18n: null,
+};
+{
+  const manifestForPerms = JSON.parse(readFileSync(resolve(dist, 'manifest.json'), 'utf8'));
+  const granted = new Set(manifestForPerms.permissions ?? []);
+  for (const rel of ['src/background/index.js', 'src/content/index.js', 'assets/sidepanel.js']) {
+    const src = readFileSync(resolve(dist, rel), 'utf8');
+    for (const m of src.matchAll(/chrome\.([a-zA-Z]+)/g)) {
+      const ns = m[1];
+      if (!(ns in PERMISSION_FOR)) {
+        problems.push(`${rel} uses chrome.${ns}, which the build does not know about`);
+      } else {
+        const need = PERMISSION_FOR[ns];
+        if (need && !granted.has(need)) {
+          problems.push(`${rel} uses chrome.${ns} but "${need}" is not in manifest permissions`);
+        }
+      }
+    }
+  }
+}
+
+// The exact failure mode the side panel hits if crossorigin survives.
+{
+  const html = readFileSync(resolve(dist, 'src/sidepanel/index.html'), 'utf8');
+  if (/crossorigin/.test(html)) {
+    problems.push('side panel HTML still has a crossorigin attribute — it will render blank');
+  }
+  for (const m of html.matchAll(/(?:src|href)="([^"]+)"/g)) {
+    const ref = m[1].replace(/^\//, '');
+    if (!/^(https?:)?\/\//.test(m[1]) && !existsSync(resolve(dist, ref))) {
+      problems.push(`side panel references missing asset: ${m[1]}`);
+    }
+  }
 }
 
 const manifest = JSON.parse(readFileSync(resolve(dist, 'manifest.json'), 'utf8'));

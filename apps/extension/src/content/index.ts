@@ -1,14 +1,18 @@
 /**
- * The Polyfill trading overlay.
+ * The market-page popup.
  *
- * Safety rules, all non-negotiable because this runs on somebody else's site:
- *   - Exactly ONE node appended to document.body. The host DOM is never mutated.
- *   - Closed shadow root, so host CSS cannot leak in and our CSS cannot leak out.
- *   - Market detected by URL, never by scraping the DOM.
- *   - Visually distinct (violet border + SIM chip) so it can never be mistaken
- *     for a native control on a real-money venue.
- *   - Draggable, and it remembers where you put it, so it can be moved off the
- *     host's own order panel.
+ * Safety rules, non-negotiable because this runs on someone else's site:
+ *   - Exactly ONE node appended to document.body. Host DOM is never mutated.
+ *   - Closed shadow root: host CSS cannot leak in, ours cannot leak out.
+ *   - Market detected by URL, never by scraping. Both venues are SPAs that
+ *     reshuffle their markup every deploy; a selector that works today breaks
+ *     silently next week, and a silently wrong market is worse than none.
+ *   - Visually distinct from the host so it can never be mistaken for a real
+ *     order control on a real-money venue.
+ *
+ * It mounts ONLY on a page that resolves to a tradeable market, and unmounts
+ * the moment you navigate away. A panel that follows you onto the homepage
+ * saying "open a market" is clutter, not a feature.
  */
 
 import { playSound } from '../lib/sfx';
@@ -20,456 +24,368 @@ import type { Settings } from '../lib/store';
 const HOST_ID = 'polyfill-root';
 
 let shadow: ShadowRoot | null = null;
-let root: HTMLDivElement | null = null;
+let panel: HTMLDivElement | null = null;
 let settings: Settings | null = null;
-let resolved: ResolvedMarket | null = null;
-let activeMeta: MarketMeta | null = null;
+let market: ResolvedMarket | null = null;
+let meta: MarketMeta | null = null;
 let quote: QuoteResult | null = null;
-let side: 'buy' | 'sell' = 'buy';
 let outcome: 'yes' | 'no' = 'yes';
 let amount = 100;
-let collapsed = false;
 let busy = false;
-let statusLine = '';
-let statusKind: 'ok' | 'error' | 'info' = 'info';
+let open = true;
+let status: { text: string; kind: 'ok' | 'err' } | null = null;
 let quoteTimer: number | undefined;
-let watched = false;
 
-const STYLE = `
+const CSS = `
 :host { all: initial; }
-* { box-sizing: border-box; margin: 0; padding: 0; }
-.panel {
-  position: fixed; z-index: 2147483600;
-  width: 320px; font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
-  background: #14171C; color: #E8EAED;
-  border: 1px solid #232830; border-left: 2px solid #8B5CF6;
-  border-radius: 10px; box-shadow: 0 12px 40px rgba(0,0,0,.55);
-  font-size: 13px; line-height: 1.4; overflow: hidden;
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+.wrap {
+  position: fixed; z-index: 2147483600; width: 268px;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #E8EAED; font-size: 13px; line-height: 1.4;
+  background: rgba(16,18,23,.97); backdrop-filter: blur(12px);
+  border: 1px solid #262B34; border-radius: 14px;
+  box-shadow: 0 16px 48px rgba(0,0,0,.6);
+  overflow: hidden; user-select: none;
 }
-.bar { display: flex; align-items: center; gap: 8px; padding: 9px 10px;
-  background: #0B0D10; border-bottom: 1px solid #232830; cursor: grab; user-select: none; }
-.bar:active { cursor: grabbing; }
-.brand { font-weight: 700; font-size: 12px; letter-spacing: .02em; }
-.sim { font-size: 9px; font-weight: 700; letter-spacing: .06em; padding: 2px 5px;
-  border: 1px solid #8B5CF6; color: #C4B5FD; border-radius: 4px; white-space: nowrap; }
-.spacer { flex: 1; }
-.iconbtn { background: none; border: none; color: #7A8290; cursor: pointer;
-  font-size: 15px; line-height: 1; padding: 2px 4px; border-radius: 4px; }
-.iconbtn:hover { color: #E8EAED; background: #232830; }
-.iconbtn.on { color: #8B5CF6; }
-.body { padding: 10px; display: grid; gap: 9px; }
-.q { font-size: 12px; color: #E8EAED; font-weight: 600; }
-.meta { display: flex; gap: 8px; align-items: center; font-size: 10px; color: #7A8290; }
-.chip { font-size: 10px; padding: 1px 5px; border: 1px solid #232830; border-radius: 4px; }
-select { width: 100%; background: #0B0D10; color: #E8EAED; border: 1px solid #232830;
-  border-radius: 6px; padding: 5px 6px; font-size: 11px; font-family: inherit; }
+.num { font-variant-numeric: tabular-nums;
+  font-family: "SF Mono", "JetBrains Mono", ui-monospace, monospace; }
+
+.head { display: flex; align-items: center; gap: 7px; padding: 9px 11px; cursor: grab; }
+.head:active { cursor: grabbing; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: #8B5CF6; flex-shrink: 0; }
+.name { font-size: 11px; font-weight: 700; letter-spacing: .04em; }
+.sim { font-size: 8px; font-weight: 700; letter-spacing: .07em; color: #A78BFA;
+  border: 1px solid #4C1D95; border-radius: 3px; padding: 1px 4px; white-space: nowrap; }
+.grow { flex: 1; }
+.x { background: none; border: 0; color: #565E6C; cursor: pointer; font-size: 15px;
+  line-height: 1; padding: 0 2px; border-radius: 4px; font-family: inherit; }
+.x:hover { color: #E8EAED; }
+
+.body { padding: 0 11px 11px; display: grid; gap: 9px; }
+
+.q { font-size: 11.5px; font-weight: 600; line-height: 1.35; color: #C8CCD4;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+select.sib { width: 100%; background: #0C0E12; color: #C8CCD4; border: 1px solid #262B34;
+  border-radius: 7px; padding: 5px 6px; font: inherit; font-size: 10.5px; }
+
 .sides { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.side { padding: 8px 6px; border-radius: 7px; border: 1px solid #232830;
-  background: #0B0D10; cursor: pointer; text-align: center; font-family: inherit;
+.side { border: 1px solid #262B34; background: #0C0E12; border-radius: 9px;
+  padding: 7px 4px; cursor: pointer; font-family: inherit; text-align: center;
   transition: border-color .12s, background .12s; }
-.side .lbl { font-size: 10px; font-weight: 700; letter-spacing: .05em; }
-.side .px { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums;
-  font-family: "JetBrains Mono", ui-monospace, monospace; }
-.side.yes { color: #00D18F; } .side.no { color: #FF4D6A; }
-.side.yes[data-on="1"] { border-color: #00D18F; background: rgba(0,209,143,.1); }
-.side.no[data-on="1"] { border-color: #FF4D6A; background: rgba(255,77,106,.1); }
-.row { display: flex; gap: 6px; align-items: center; }
-.amt { flex: 1; background: #0B0D10; border: 1px solid #232830; border-radius: 6px;
-  padding: 7px 8px; color: #E8EAED; font-size: 14px; font-weight: 600;
-  font-family: "JetBrains Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
-.amt:focus { outline: none; border-color: #8B5CF6; }
-.presets { display: flex; gap: 4px; }
-.preset { flex: 1; background: #0B0D10; border: 1px solid #232830; color: #7A8290;
-  border-radius: 5px; padding: 4px 0; font-size: 10px; cursor: pointer; font-family: inherit; }
-.preset:hover { color: #E8EAED; border-color: #8B5CF6; }
-.ticket { background: #0B0D10; border: 1px solid #232830; border-radius: 7px;
-  padding: 7px 8px; display: grid; gap: 3px; font-size: 11px; }
-.tr { display: flex; justify-content: space-between; }
-.tr span:first-child { color: #7A8290; }
-.tr span:last-child { font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-variant-numeric: tabular-nums; }
-.tr.hl span:last-child { color: #00D18F; font-weight: 600; }
+.side .t { font-size: 9px; font-weight: 700; letter-spacing: .05em; opacity: .85; }
+.side .p { font-size: 17px; font-weight: 700; margin-top: 1px; }
+.side.y { color: #00D18F; } .side.n { color: #FF4D6A; }
+.side.y[data-on="1"] { border-color: #00D18F; background: rgba(0,209,143,.11); }
+.side.n[data-on="1"] { border-color: #FF4D6A; background: rgba(255,77,106,.11); }
+
+.amt { display: flex; align-items: center; background: #0C0E12; border: 1px solid #262B34;
+  border-radius: 9px; padding: 0 9px; }
+.amt span { color: #565E6C; font-size: 13px; }
+.amt input { flex: 1; background: none; border: 0; color: #E8EAED; font: inherit;
+  font-size: 15px; font-weight: 600; padding: 8px 4px; outline: none;
+  font-variant-numeric: tabular-nums; font-family: "SF Mono", ui-monospace, monospace; }
+.amt input::-webkit-outer-spin-button, .amt input::-webkit-inner-spin-button {
+  -webkit-appearance: none; margin: 0; }
+
+.chips { display: flex; gap: 5px; }
+.chip { flex: 1; background: #0C0E12; border: 1px solid #262B34; color: #7A8290;
+  border-radius: 6px; padding: 4px 0; font: inherit; font-size: 10px; cursor: pointer; }
+.chip:hover { color: #E8EAED; border-color: #8B5CF6; }
+
+.tick { background: #0C0E12; border-radius: 9px; padding: 7px 9px; display: grid; gap: 3px; }
+.r { display: flex; justify-content: space-between; font-size: 11px; }
+.r > span:first-child { color: #6B7280; }
+.r.big > span:last-child { color: #00D18F; font-weight: 600; }
 .warn { color: #FFB020; }
-.place { width: 100%; padding: 10px; border: none; border-radius: 7px; cursor: pointer;
-  font-size: 13px; font-weight: 700; font-family: inherit; color: #06070A; }
-.place.yes { background: #00D18F; } .place.no { background: #FF4D6A; }
-.place:disabled { opacity: .5; cursor: not-allowed; }
-.status { font-size: 11px; padding: 6px 7px; border-radius: 6px; }
-.status.ok { background: rgba(0,209,143,.12); color: #00D18F; }
-.status.error { background: rgba(255,77,106,.12); color: #FF8095; }
-.status.info { background: #0B0D10; color: #7A8290; }
-.pos { background: rgba(139,92,246,.1); border: 1px solid #8B5CF6; border-radius: 7px;
-  padding: 6px 8px; font-size: 11px; display: grid; gap: 2px; }
-.foot { font-size: 9px; color: #4A5260; text-align: center; padding-top: 1px; }
-.hidden { display: none !important; }
+
+.go { width: 100%; padding: 10px; border: 0; border-radius: 9px; cursor: pointer;
+  font: inherit; font-size: 13px; font-weight: 700; color: #07080B; }
+.go.y { background: #00D18F; } .go.n { background: #FF4D6A; }
+.go:disabled { opacity: .45; cursor: not-allowed; }
+
+.msg { font-size: 10.5px; padding: 6px 8px; border-radius: 7px; line-height: 1.35; }
+.msg.ok { background: rgba(0,209,143,.12); color: #00D18F; }
+.msg.err { background: rgba(255,77,106,.12); color: #FF8095; }
+
+.hide { display: none !important; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 `;
 
-// ── mount ───────────────────────────────────────────────────────────────────
+const esc = (s: string) =>
+  s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 function mount(): void {
   if (document.getElementById(HOST_ID)) return;
-
   const host = document.createElement('div');
   host.id = HOST_ID;
-  // The ONE node we add. Nothing else in the host document is touched.
   shadow = host.attachShadow({ mode: 'closed' });
 
   const style = document.createElement('style');
-  style.textContent = STYLE;
+  style.textContent = CSS;
   shadow.appendChild(style);
 
-  root = document.createElement('div');
-  root.className = 'panel';
-  shadow.appendChild(root);
-
+  panel = document.createElement('div');
+  panel.className = 'wrap';
+  shadow.appendChild(panel);
   document.body.appendChild(host);
-  positionPanel();
-  render();
-}
 
-/**
- * Park the panel where it will not cover the host's own order ticket.
- *
- * Both venues put their buy panel on the right, so the default is bottom-LEFT.
- * A stored position always wins — if the user moved it, that was deliberate.
- */
-function positionPanel(): void {
-  if (!root) return;
+  // Default bottom-left: both venues put their real order panel on the right,
+  // and covering it would be both rude and confusing.
   const saved = settings?.overlayPosition;
   if (saved) {
-    root.style.left = `${saved.x}px`;
-    root.style.top = `${saved.y}px`;
+    panel.style.left = `${saved.x}px`;
+    panel.style.top = `${saved.y}px`;
   } else {
-    root.style.left = '20px';
-    root.style.bottom = '20px';
+    panel.style.left = '20px';
+    panel.style.bottom = '20px';
   }
 }
 
-function h(html: string): string {
-  return html;
-}
-
-function esc(s: string): string {
-  return s.replace(/[&<>"']/g, (c) =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string,
-  );
+function unmount(): void {
+  document.getElementById(HOST_ID)?.remove();
+  shadow = null;
+  panel = null;
+  quote = null;
+  status = null;
 }
 
 function render(): void {
-  if (!root) return;
+  if (!panel || !meta || !market) return;
 
-  if (!resolved || !activeMeta) {
-    root.innerHTML = h(`
-      <div class="bar">
-        <span class="brand">POLYFILL</span>
-        <span class="sim">SIM · NO REAL MONEY</span>
-        <span class="spacer"></span>
-        <button class="iconbtn" data-act="close">×</button>
-      </div>
-      <div class="body">
-        <div class="status info">Open a market page to trade it with simulated money.</div>
-      </div>`);
-    wire();
-    return;
-  }
-
-  const unit = activeMeta.venue === 'polymarket' ? 'shares' : 'contracts';
-  const yesPx = resolved.siblings.find((s) => s.meta.venueMarketId === activeMeta!.venueMarketId)?.mid;
+  const self = market.siblings.find((s) => s.meta.venueMarketId === meta!.venueMarketId);
+  const yes = self?.mid ?? null;
+  const no = yes == null ? null : 100 - yes;
 
   const picker =
-    resolved.siblings.length > 1
-      ? `<select data-act="pick">${resolved.siblings
+    market.siblings.length > 1
+      ? `<select class="sib" data-a="pick">${market.siblings
           .map(
             (s) =>
-              `<option value="${esc(s.meta.venueMarketId)}" ${
-                s.meta.venueMarketId === activeMeta!.venueMarketId ? 'selected' : ''
-              }>${esc(s.meta.question.slice(0, 60))}</option>`,
+              `<option value="${esc(s.meta.venueMarketId)}"${
+                s.meta.venueMarketId === meta!.venueMarketId ? ' selected' : ''
+              }>${esc(s.meta.question.slice(0, 54))}</option>`,
           )
           .join('')}</select>`
       : '';
 
   const ticket = quote
-    ? `<div class="ticket">
-        <div class="tr"><span>Avg fill</span><span>${quote.avgPrice.toFixed(1)}¢</span></div>
-        <div class="tr"><span>${unit}</span><span>${quote.qty.toLocaleString()}</span></div>
-        <div class="tr"><span>Slippage</span><span class="${quote.slippageBps > 50 ? 'warn' : ''}">${Math.round(quote.slippageBps)} bps</span></div>
-        ${quote.fee > 0 ? `<div class="tr"><span>Fee</span><span>P$${quote.fee.toFixed(2)}</span></div>` : ''}
-        <div class="tr"><span>Cost</span><span>P$${quote.totalCost.toFixed(2)}</span></div>
-        <div class="tr"><span>Max payout</span><span>P$${quote.maxPayout.toFixed(2)}</span></div>
-        <div class="tr hl"><span>Max profit</span><span>+P$${quote.maxProfit.toFixed(2)}</span></div>
-        <div class="tr"><span>Breakeven</span><span>${quote.breakeven.toFixed(1)}¢</span></div>
-        ${quote.partial ? `<div class="tr"><span class="warn">Partial</span><span class="warn">book ran out</span></div>` : ''}
-      </div>`
-    : `<div class="status info">Enter a size to get a live quote.</div>`;
+    ? `<div class="tick">
+         <div class="r"><span>Avg fill</span><span class="num">${quote.avgPrice.toFixed(1)}¢</span></div>
+         <div class="r"><span>Size</span><span class="num">${quote.qty.toLocaleString()}</span></div>
+         <div class="r"><span>Cost</span><span class="num">P$${quote.totalCost.toFixed(2)}</span></div>
+         <div class="r big"><span>Max profit</span><span class="num">+P$${quote.maxProfit.toFixed(2)}</span></div>
+         ${quote.partial ? `<div class="r"><span class="warn">Partial</span><span class="warn">book ran out</span></div>` : ''}
+       </div>`
+    : '';
 
-  root.innerHTML = h(`
-    <div class="bar">
-      <span class="brand">POLYFILL</span>
-      <span class="sim">SIM · NO REAL MONEY</span>
-      <span class="spacer"></span>
-      <button class="iconbtn ${watched ? 'on' : ''}" data-act="star" title="${watched ? 'Unstar' : 'Add to watchlist'}">${watched ? '★' : '☆'}</button>
-      <button class="iconbtn" data-act="toggle">${collapsed ? '▴' : '▾'}</button>
-      <button class="iconbtn" data-act="close">×</button>
+  panel.innerHTML = `
+    <div class="head">
+      <span class="dot"></span>
+      <span class="name">POLYFILL</span>
+      <span class="sim">SIM</span>
+      <span class="grow"></span>
+      <button class="x" data-a="fold">${open ? '−' : '+'}</button>
+      <button class="x" data-a="close">×</button>
     </div>
-    <div class="body ${collapsed ? 'hidden' : ''}">
-      <div class="q">${esc(activeMeta.question.slice(0, 110))}</div>
-      <div class="meta">
-        <span class="chip">${esc(activeMeta.venue)}</span>
-        <span class="chip">${esc(settings?.realism ?? 'realistic')}</span>
-        ${yesPx != null ? `<span class="chip">mid ${yesPx.toFixed(0)}¢</span>` : ''}
-      </div>
+    <div class="body ${open ? '' : 'hide'}">
+      <div class="q">${esc(meta.question)}</div>
       ${picker}
       <div class="sides">
-        <button class="side yes" data-act="side" data-outcome="yes" data-on="${outcome === 'yes' ? 1 : 0}">
-          <div class="lbl">▲ ${esc(activeMeta.yesLabel.slice(0, 14)).toUpperCase()}</div>
-          <div class="px">${yesPx != null ? yesPx.toFixed(0) + '¢' : '--'}</div>
+        <button class="side y" data-a="side" data-o="yes" data-on="${outcome === 'yes' ? 1 : 0}">
+          <div class="t">▲ YES</div><div class="p num">${yes == null ? '--' : yes.toFixed(0) + '¢'}</div>
         </button>
-        <button class="side no" data-act="side" data-outcome="no" data-on="${outcome === 'no' ? 1 : 0}">
-          <div class="lbl">▼ ${esc(activeMeta.noLabel.slice(0, 14)).toUpperCase()}</div>
-          <div class="px">${yesPx != null ? (100 - yesPx).toFixed(0) + '¢' : '--'}</div>
+        <button class="side n" data-a="side" data-o="no" data-on="${outcome === 'no' ? 1 : 0}">
+          <div class="t">▼ NO</div><div class="p num">${no == null ? '--' : no.toFixed(0) + '¢'}</div>
         </button>
       </div>
-      <div class="row">
-        <input class="amt" data-act="amount" type="number" min="1" step="1" value="${amount}" />
-      </div>
-      <div class="presets">
-        ${[25, 50, 100, 250].map((v) => `<button class="preset" data-act="preset" data-v="${v}">$${v}</button>`).join('')}
+      <div class="amt"><span>P$</span><input data-a="amt" type="number" min="1" step="1" value="${amount}" /></div>
+      <div class="chips">
+        ${[25, 50, 100, 250].map((v) => `<button class="chip" data-a="pre" data-v="${v}">${v}</button>`).join('')}
       </div>
       ${ticket}
-      ${statusLine ? `<div class="status ${statusKind}">${esc(statusLine)}</div>` : ''}
-      <button class="place ${outcome}" data-act="place" ${busy || !quote ? 'disabled' : ''}>
-        ${busy ? 'Placing…' : `${side === 'buy' ? 'Buy' : 'Sell'} ${outcome.toUpperCase()}`}
+      ${status ? `<div class="msg ${status.kind}">${esc(status.text)}</div>` : ''}
+      <button class="go ${outcome === 'yes' ? 'y' : 'n'}" data-a="go" ${busy || !quote ? 'disabled' : ''}>
+        ${busy ? 'Placing…' : `Buy ${outcome.toUpperCase()}`}
       </button>
-      <div class="foot">Simulated fills against the real book. No real money is involved.</div>
-    </div>`);
+    </div>`;
 
   wire();
 }
 
 function wire(): void {
-  if (!root || !shadow) return;
+  if (!panel) return;
 
-  root.querySelectorAll('[data-act]').forEach((el) => {
-    const act = (el as HTMLElement).dataset.act;
-
-    if (act === 'close') el.addEventListener('click', teardown);
-    if (act === 'star')
-      el.addEventListener('click', async () => {
-        if (!activeMeta) return;
-        try {
-          const { watched: now } = await send<{ watched: boolean }>({
-            type: 'TOGGLE_WATCH',
-            meta: activeMeta,
-            mid: quote?.bookMid ?? null,
-          });
-          watched = now;
-          playSound('tick', settings?.soundVolume ?? 0.35, settings?.soundEnabled ?? true);
-          render();
-        } catch {
-          // Starring is a convenience; never let it surface as an order error.
-        }
-      });
-    if (act === 'toggle')
-      el.addEventListener('click', () => {
-        collapsed = !collapsed;
-        render();
-      });
-    if (act === 'side')
-      el.addEventListener('click', () => {
-        outcome = ((el as HTMLElement).dataset.outcome as 'yes' | 'no') ?? 'yes';
-        playSound('tick', settings?.soundVolume ?? 0.35, settings?.soundEnabled ?? true);
-        void requestQuote();
-      });
-    if (act === 'preset')
-      el.addEventListener('click', () => {
-        amount = Number((el as HTMLElement).dataset.v);
-        playSound('tick', settings?.soundVolume ?? 0.35, settings?.soundEnabled ?? true);
-        void requestQuote();
-      });
-    if (act === 'amount')
-      el.addEventListener('input', () => {
-        amount = Number((el as HTMLInputElement).value) || 0;
-        void requestQuote();
-      });
-    if (act === 'pick')
-      el.addEventListener('change', () => {
-        const id = (el as HTMLSelectElement).value;
-        activeMeta = resolved?.siblings.find((s) => s.meta.venueMarketId === id)?.meta ?? activeMeta;
-        quote = null;
-        void requestQuote();
-      });
-    if (act === 'place') el.addEventListener('click', () => void place());
+  panel.querySelectorAll('[data-a]').forEach((el) => {
+    const a = (el as HTMLElement).dataset.a;
+    if (a === 'close') el.addEventListener('click', unmount);
+    if (a === 'fold') el.addEventListener('click', () => { open = !open; render(); });
+    if (a === 'side') el.addEventListener('click', () => {
+      outcome = ((el as HTMLElement).dataset.o as 'yes' | 'no') ?? 'yes';
+      beep('tick');
+      requestQuote();
+    });
+    if (a === 'pre') el.addEventListener('click', () => {
+      amount = Number((el as HTMLElement).dataset.v) || 100;
+      beep('tick');
+      requestQuote();
+    });
+    if (a === 'amt') el.addEventListener('input', () => {
+      amount = Number((el as HTMLInputElement).value) || 0;
+      requestQuote();
+    });
+    if (a === 'pick') el.addEventListener('change', () => {
+      const id = (el as HTMLSelectElement).value;
+      meta = market?.siblings.find((s) => s.meta.venueMarketId === id)?.meta ?? meta;
+      quote = null; status = null;
+      requestQuote();
+    });
+    if (a === 'go') el.addEventListener('click', () => void place());
   });
 
-  const bar = root.querySelector('.bar');
-  if (bar) bar.addEventListener('mousedown', startDrag as EventListener);
+  panel.querySelector('.head')?.addEventListener('mousedown', drag as EventListener);
 }
 
-// ── drag ────────────────────────────────────────────────────────────────────
+function beep(n: 'tick' | 'fill' | 'partial' | 'reject'): void {
+  playSound(n, settings?.soundVolume ?? 0.35, settings?.soundEnabled ?? true);
+}
 
-function startDrag(e: MouseEvent): void {
-  if ((e.target as HTMLElement).dataset.act) return; // let buttons be buttons
-  if (!root) return;
-
-  const rect = root.getBoundingClientRect();
-  const dx = e.clientX - rect.left;
-  const dy = e.clientY - rect.top;
+function drag(e: MouseEvent): void {
+  if ((e.target as HTMLElement).dataset.a) return;
+  if (!panel) return;
+  const r = panel.getBoundingClientRect();
+  const dx = e.clientX - r.left;
+  const dy = e.clientY - r.top;
 
   const move = (ev: MouseEvent) => {
-    if (!root) return;
-    const x = Math.max(0, Math.min(window.innerWidth - rect.width, ev.clientX - dx));
-    const y = Math.max(0, Math.min(window.innerHeight - 60, ev.clientY - dy));
-    root.style.left = `${x}px`;
-    root.style.top = `${y}px`;
-    root.style.bottom = 'auto';
+    if (!panel) return;
+    panel.style.left = `${Math.max(0, Math.min(innerWidth - r.width, ev.clientX - dx))}px`;
+    panel.style.top = `${Math.max(0, Math.min(innerHeight - 50, ev.clientY - dy))}px`;
+    panel.style.bottom = 'auto';
   };
-
   const up = () => {
-    document.removeEventListener('mousemove', move);
-    document.removeEventListener('mouseup', up);
-    if (!root) return;
-    const r = root.getBoundingClientRect();
-    void send({ type: 'SET_SETTINGS', patch: { overlayPosition: { x: r.left, y: r.top } } }).catch(
+    removeEventListener('mousemove', move);
+    removeEventListener('mouseup', up);
+    if (!panel) return;
+    const b = panel.getBoundingClientRect();
+    void send({ type: 'SET_SETTINGS', patch: { overlayPosition: { x: b.left, y: b.top } } }).catch(
       () => undefined,
     );
   };
-
-  document.addEventListener('mousemove', move);
-  document.addEventListener('mouseup', up);
+  addEventListener('mousemove', move);
+  addEventListener('mouseup', up);
   e.preventDefault();
 }
 
-// ── trading ─────────────────────────────────────────────────────────────────
-
 function requestQuote(): void {
   clearTimeout(quoteTimer);
-  if (!activeMeta || !(amount > 0)) {
+  if (!meta || !(amount > 0)) {
     quote = null;
     render();
     return;
   }
-  // Debounce so typing a size does not fire a request per keystroke.
-  quoteTimer = window.setTimeout(async () => {
+  // Debounced so typing a size does not fire a request per keystroke.
+  quoteTimer = setTimeout(async () => {
     try {
       quote = await send<QuoteResult>({
         type: 'QUOTE',
-        meta: activeMeta!,
-        side,
+        meta: meta!,
+        side: 'buy',
         outcome,
         notional: amount,
       });
-      statusLine = '';
-      statusKind = 'info';
+      status = null;
     } catch (e) {
       quote = null;
-      statusLine = (e as Error).message;
-      statusKind = 'error';
+      status = { text: (e as Error).message, kind: 'err' };
     }
     render();
-  }, 250);
-}
-
-/** Ask the worker whether the current market is starred, and repaint. */
-async function syncWatched(): Promise<void> {
-  if (!activeMeta) { watched = false; return; }
-  try {
-    const state = await send<{ watchlist: { marketKey: string }[] }>({ type: 'GET_STATE' });
-    const key = `${activeMeta.venue}:${activeMeta.venueMarketId}`;
-    watched = state.watchlist.some((w) => w.marketKey === key);
-  } catch {
-    watched = false;
-  }
-  render();
+  }, 250) as unknown as number;
 }
 
 async function place(): Promise<void> {
-  if (!quote || !activeMeta || busy) return;
+  if (!quote || !meta || busy) return;
   busy = true;
-  statusLine = '';
+  status = null;
   render();
 
-  const vol = settings?.soundVolume ?? 0.35;
-  const on = settings?.soundEnabled ?? true;
-
   try {
-    const { order } = await send<{ order: { status: string; qtyFilled: number; avgPrice: number } }>({
-      type: 'SUBMIT',
-      meta: activeMeta,
-      quote,
-    });
-
-    playSound(order.status === 'partial' ? 'partial' : 'fill', vol, on);
-    statusLine = `${order.status === 'partial' ? 'Partial fill' : 'Filled'} — ${order.qtyFilled.toLocaleString()} @ ${order.avgPrice.toFixed(1)}¢`;
-    statusKind = 'ok';
+    const { order } = await send<{ order: { status: string; qtyFilled: number; avgPrice: number } }>(
+      { type: 'SUBMIT', meta, quote },
+    );
+    beep(order.status === 'partial' ? 'partial' : 'fill');
+    status = {
+      text: `${order.status === 'partial' ? 'Partial' : 'Filled'} — ${order.qtyFilled.toLocaleString()} @ ${order.avgPrice.toFixed(1)}¢`,
+      kind: 'ok',
+    };
     quote = null;
   } catch (e) {
-    playSound('reject', vol, on);
+    beep('reject');
     const err = e as Error & { detail?: string };
-    statusLine = err.detail ? `${err.message} ${err.detail}` : err.message;
-    statusKind = 'error';
+    status = { text: err.detail ? `${err.message} ${err.detail}` : err.message, kind: 'err' };
   } finally {
     busy = false;
     render();
-    // Refresh the quote so the panel shows a live price after a fill.
-    if (statusKind === 'ok') void requestQuote();
+    if (status?.kind === 'ok') requestQuote();
   }
 }
 
-function teardown(): void {
-  document.getElementById(HOST_ID)?.remove();
-  shadow = null;
-  root = null;
-}
-
-// ── SPA navigation ──────────────────────────────────────────────────────────
-
-async function syncToUrl(): Promise<void> {
-  const url = location.href;
+/**
+ * Sync to the current URL. Mounts on a market page, unmounts off one.
+ */
+async function sync(): Promise<void> {
+  let next: ResolvedMarket | null = null;
   try {
-    const next = await send<ResolvedMarket | null>({ type: 'RESOLVE_URL', url });
-    if (!next) {
-      resolved = null;
-      activeMeta = null;
-    } else if (next.meta.venueMarketId !== activeMeta?.venueMarketId) {
-      resolved = next;
-      activeMeta = next.meta;
-      quote = null;
-      statusLine = '';
-      void syncWatched();
-      void requestQuote();
-    }
+    next = await send<ResolvedMarket | null>({ type: 'RESOLVE_URL', url: location.href });
   } catch {
-    resolved = null;
-    activeMeta = null;
+    next = null;
   }
+
+  if (!next) {
+    // Not a market page — leave no trace.
+    market = null;
+    meta = null;
+    unmount();
+    return;
+  }
+
+  const changed = next.meta.venueMarketId !== meta?.venueMarketId;
+  market = next;
+  if (changed) {
+    meta = next.meta;
+    quote = null;
+    status = null;
+  }
+
+  mount();
   render();
+  if (changed) requestQuote();
 }
 
 /**
  * Both venues are SPAs, so `pushState` is the only navigation signal there is.
- * Patching history on `window` is observation, not host mutation — it does not
- * touch the DOM and it forwards every call through untouched.
+ * Patching history on `window` observes without touching the host DOM, and
+ * every call is forwarded through untouched.
  */
-function watchNavigation(): void {
+function watchNav(): void {
   let last = location.href;
-
   const fire = () => {
     if (location.href === last) return;
     last = location.href;
-    void syncToUrl();
+    void sync();
   };
 
-  for (const method of ['pushState', 'replaceState'] as const) {
-    const original = history[method];
-    history[method] = function (this: History, ...args: Parameters<History['pushState']>) {
-      const result = original.apply(this, args);
+  for (const m of ['pushState', 'replaceState'] as const) {
+    const original = history[m];
+    history[m] = function (this: History, ...args: Parameters<History['pushState']>) {
+      const r = original.apply(this, args);
       queueMicrotask(fire);
-      return result;
+      return r;
     };
   }
-
-  window.addEventListener('popstate', fire);
-  // Belt and braces: some client routers swap views without a history event.
+  addEventListener('popstate', fire);
+  // Some client routers swap views without emitting a history event.
   new MutationObserver(fire).observe(document.body, { childList: true, subtree: false });
 }
 
@@ -477,14 +393,12 @@ async function boot(): Promise<void> {
   try {
     settings = await send<Settings>({ type: 'GET_SETTINGS' });
   } catch {
-    return; // worker not ready; the next navigation will retry
+    return; // worker asleep; next navigation retries
   }
   if (!settings.overlayEnabled) return;
-
   amount = settings.defaultOrderSize || 100;
-  mount();
-  watchNavigation();
-  await syncToUrl();
+  watchNav();
+  await sync();
 }
 
 if (document.readyState === 'loading') {

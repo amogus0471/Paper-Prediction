@@ -15,6 +15,7 @@
  */
 
 import {
+  appendLink,
   applyAdverseTicks,
   checkBookInvariants,
   computeFee,
@@ -337,7 +338,7 @@ export async function submitOrder(opts: SubmitOpts): Promise<StoredOrder> {
   // Bound the set: anything this old is expired by definition.
   if (consumedQuotes.size > 200) consumedQuotes.clear();
 
-  return mutate<StoredOrder>((state) => {
+  return mutate<StoredOrder>(async (state) => {
     // Re-walk on the LATER book. Whatever comes out is the fill.
     const priced = priceOrder({
       book: fillBook,
@@ -486,6 +487,25 @@ export async function submitOrder(opts: SubmitOpts): Promise<StoredOrder> {
         mid: priced.bookMid,
       },
     };
+
+    // Commit the fill to the tamper-evident chain before it is visible.
+    state.chain ??= [];
+    state.chain.push(
+      await appendLink(state.chain[state.chain.length - 1] ?? null, {
+        kind: 'fill',
+        orderId: order.id,
+        marketKey: key,
+        side: order.side,
+        outcome: order.outcome,
+        qty: order.qtyFilled,
+        price: order.avgPrice,
+        cost: order.cost,
+        fee: order.fee,
+        bookCapturedAt: order.bookSnapshot.capturedAt,
+        balanceAfter: state.cash,
+        ts: now,
+      }),
+    );
 
     state.orders.unshift(order);
     if (state.orders.length > 500) state.orders.length = 500;
