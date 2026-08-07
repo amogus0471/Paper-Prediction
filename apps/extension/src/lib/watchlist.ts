@@ -21,7 +21,11 @@ export function isWatched(state: LocalState, venue: string, venueMarketId: strin
 }
 
 /** Star / unstar. Returns the new watched state so the caller can render it. */
-export async function toggleWatch(meta: MarketMeta, mid: number | null): Promise<boolean> {
+export async function toggleWatch(
+  meta: MarketMeta,
+  mid: number | null,
+  sourceUrl?: string,
+): Promise<boolean> {
   const key = marketKey(meta.venue, meta.venueMarketId);
   return mutate((state) => {
     const at = state.watchlist.findIndex((w) => w.marketKey === key);
@@ -43,6 +47,7 @@ export async function toggleWatch(meta: MarketMeta, mid: number | null): Promise
       addedAt: new Date().toISOString(),
       lastMid: mid,
       ...(meta.slug ? { slug: meta.slug } : {}),
+      ...(sourceUrl ? { sourceUrl } : {}),
       lastSeenAt: new Date().toISOString(),
       closeTime: meta.closeTime,
     };

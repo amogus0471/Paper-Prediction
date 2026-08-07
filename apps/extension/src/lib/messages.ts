@@ -27,7 +27,9 @@ export type Request =
   | { type: 'WATCH_HAS'; meta: MarketMeta }
   | { type: 'GET_SUMMARY' }
   | { type: 'OPEN_MARKET'; url: string }
-  | { type: 'TOGGLE_WATCH'; meta: MarketMeta; mid: number | null }
+  | { type: 'UNDO_ORDER'; orderId: string; meta: MarketMeta }
+  | { type: 'CLOSE_POSITION'; meta: MarketMeta; outcome: 'yes' | 'no'; qty?: number }
+  | { type: 'TOGGLE_WATCH'; meta: MarketMeta; mid?: number | null; sourceUrl?: string }
   | { type: 'REFRESH_WATCHLIST' }
   | { type: 'GET_RECORD' };
 

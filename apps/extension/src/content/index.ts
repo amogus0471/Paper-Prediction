@@ -316,6 +316,18 @@ ${ODOMETER_CSS}
   animation: spin .6s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .toast.ok { border-color: rgba(34,197,94,.45); color: #6EE7A0; }
+.toast.undo { position: relative; align-items: center; gap: 10px; padding-bottom: 9px;
+  overflow: hidden; }
+.undobtn { background: none; border: 1px solid rgba(239,68,68,.5); color: #FCA5A5;
+  border-radius: 7px; padding: 3px 10px; font: inherit; font-size: 10.5px; font-weight: 700;
+  cursor: pointer; transition: background .14s, color .14s, transform .1s; }
+.undobtn:hover { background: rgba(239,68,68,.16); color: #fff; transform: translateY(-1px); }
+.undobtn:active { transform: none; }
+.undobtn:disabled { opacity: .55; cursor: default; transform: none; }
+/* Ten-second wind-down, so the offer visibly expires rather than vanishing. */
+.undobar { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--down);
+  width: 100%; transform-origin: left; animation: undoWind 10s linear forwards; }
+@keyframes undoWind { to { transform: scaleX(0); } }
 .toast.bad { border-color: rgba(239,68,68,.45); color: #FCA5A5; }
 
 canvas.confetti { position: fixed; inset: 0; pointer-events: none; z-index: 2147483602; }
@@ -779,7 +791,13 @@ function paint(): void {
   syncRows(n.ticket, rows);
 
   const extras: [string, string, string?][] = [];
-  if (live.spread != null) extras.push(['Spread', `${live.spread.toFixed(1)}¢`]);
+  if (live.spread != null) {
+    extras.push([
+      live.spread >= 4 ? 'Spread ⓘ' : 'Spread',
+      `${live.spread.toFixed(1)}¢`,
+      live.spread >= 4 ? 'warn' : undefined,
+    ]);
+  }
   if (live.depth != null) extras.push(['Visible depth', `P$${Math.round(live.depth).toLocaleString()}`]);
   if (pnl) extras.push(['Your balance', `P$${pnl.equity.toFixed(2)}`]);
   syncRows(n.extra, expanded ? extras : []);
@@ -893,7 +911,9 @@ function resize(e: MouseEvent, card: HTMLElement): void {
   const startW = card.getBoundingClientRect().width;
 
   const move = (ev: MouseEvent) => {
-    const w = Math.max(280, Math.min(620, startW + (ev.clientX - startX)));
+    // Floor at 264px: below that the side buttons and the amount box start
+      // colliding. Ceiling at 560px so it never dominates the host page.
+      const w = Math.max(264, Math.min(560, startW + (ev.clientX - startX)));
     card.style.setProperty('--w', `${w}px`);
     overlayWidth = w;
     expanded = w > 380;
@@ -1005,6 +1025,10 @@ async function toggleWatch(): Promise<void> {
       type: 'TOGGLE_WATCH',
       meta,
       mid: live.yes,
+      // The page you were on IS the correct link. Reconstructing one from a
+      // conditionId or a series ticker produced 404s, because neither is the
+      // slug the venue routes on.
+      sourceUrl: location.href,
     });
     watched = now;
     paint();
@@ -1015,6 +1039,53 @@ async function toggleWatch(): Promise<void> {
   }
 }
 
+/**
+ * Offer to reverse a fill for ten seconds.
+ *
+ * Sells back the exact quantity at the exact fill price, so a mis-tap is free.
+ * Deliberately short: beyond a few seconds you are not undoing a mistake, you
+ * are asking for a risk-free option on the market moving, and that is the one
+ * thing a simulator must not hand out.
+ */
+function offerUndo(order: { id: string; qtyFilled: number; avgPrice: number }): void {
+  if (!shadow || !toastHost || !meta) return;
+
+  const el2 = document.createElement('div');
+  el2.className = 'toast undo';
+  const label = el('span');
+  label.textContent = 'Order placed';
+  const btn = el('button', 'undobtn', 'Undo');
+  const bar = el('span', 'undobar');
+  el2.append(label, btn, bar);
+  toastHost.appendChild(el2);
+
+  let done = false;
+  const close = () => {
+    if (done) return;
+    done = true;
+    el2.classList.add('out');
+    setTimeout(() => el2.remove(), 220);
+  };
+
+  btn.addEventListener('click', async () => {
+    if (done || !meta) return;
+    btn.disabled = true;
+    btn.textContent = 'Undoing…';
+    try {
+      await send({ type: 'UNDO_ORDER', orderId: order.id, meta });
+      close();
+      toast('Order reversed — nothing was charged', 'ok', 2400);
+      void refreshPnl();
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = 'Undo';
+      showError(e as Error);
+    }
+  });
+
+  setTimeout(close, 10_000);
+}
+
 async function place(): Promise<void> {
   if (!quote || !meta || busy) return;
   busy = true;
@@ -1022,7 +1093,9 @@ async function place(): Promise<void> {
   const done = toast('Placing your order…', 'pending');
 
   try {
-    const { order } = await send<{ order: { status: string; qtyFilled: number; avgPrice: number } }>(
+    const { order } = await send<{
+      order: { id: string; status: string; qtyFilled: number; avgPrice: number };
+    }>(
       { type: 'SUBMIT', meta, quote },
     );
     done();
@@ -1035,6 +1108,10 @@ async function place(): Promise<void> {
     confetti();
     quote = null;
     void refreshPnl();
+
+    // Ten-second undo. Closes the position at the SAME price it filled at, so
+    // a misclick costs nothing — after that it is a real trade and stands.
+    offerUndo(order);
   } catch (e) {
     done();
     playSound('reject', settings?.soundVolume ?? 0.35, settings?.soundEnabled ?? true);
@@ -1140,10 +1217,16 @@ function bindKeys(): void {
     'keydown',
     (e) => {
       if (!meta || collapsed || !settings?.keyboardTrading) return;
-      const t = e.target as HTMLElement | null;
+      // composedPath()[0], not e.target.
+      //
+      // Our UI lives in a CLOSED shadow root, and the DOM retargets events
+      // crossing that boundary: at document level e.target is the host <div>,
+      // never the <input> inside it. So the "is the user typing?" check always
+      // read false and Y/N got hijacked mid-word in the outcome search box.
+      const t = (e.composedPath?.()[0] ?? e.target) as HTMLElement | null;
       const typing =
-        t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
-      // Our own amount box is an input, so allow Enter through from there.
+        !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+      // Our own amount box is an input, so Enter still places from there.
       const ours = t === n?.amtInput;
       if (typing && !ours) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;

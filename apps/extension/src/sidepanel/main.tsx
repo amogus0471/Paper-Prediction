@@ -343,10 +343,23 @@ function Watch({ state, onChange }: { state: LocalState; onChange: () => void })
 }
 
 /** Market URLs are stable public routes; deep-linking beats re-searching. */
+/**
+ * Where "Open market" goes.
+ *
+ * Prefers the URL the market was starred from, which is by definition correct.
+ * The fallbacks are best-effort for rows saved before that was recorded:
+ * Polymarket routes on an EVENT slug (we hold a market conditionId, hence the
+ * 404s), and a bare Kalshi series ticker is not a page — so that one goes to
+ * search rather than a dead link.
+ */
 function marketUrl(w: LocalState['watchlist'][number]): string {
-  return w.venue === 'polymarket'
-    ? `https://polymarket.com/event/${encodeURIComponent(w.slug ?? w.venueMarketId)}`
-    : `https://kalshi.com/markets/${encodeURIComponent((w.venueMarketId.split('-')[0] ?? '').toLowerCase())}`;
+  if (w.sourceUrl) return w.sourceUrl;
+  if (w.venue === 'polymarket') {
+    return w.slug
+      ? `https://polymarket.com/event/${encodeURIComponent(w.slug)}`
+      : `https://polymarket.com/markets?_q=${encodeURIComponent(w.question.slice(0, 60))}`;
+  }
+  return `https://kalshi.com/search?q=${encodeURIComponent(w.question.slice(0, 60))}`;
 }
 
 function WatchRow({

@@ -104,6 +104,15 @@ export interface WatchedMarket {
   history?: number[];
   /** Venue slug, for deep-linking back to the market page. */
   slug?: string;
+  /**
+   * The exact URL the market was starred from.
+   *
+   * Authoritative for "Open market". Rebuilding a venue URL from an id is
+   * guesswork — Polymarket routes on an EVENT slug while we hold a market
+   * conditionId, and a Kalshi series ticker is not a page — and the guesses
+   * 404ed. Remembering beats reconstructing.
+   */
+  sourceUrl?: string;
   lastSeenAt?: string;
   closeTime?: string;
 }
@@ -132,6 +141,15 @@ export interface Settings {
    * not explicitly hand over.
    */
   turboMode: boolean;
+  /**
+   * Enforce the 5%-of-visible-depth cap.
+   *
+   * On, a big order into a thin book is refused. Off, it fills against
+   * whatever depth exists and you eat the bad average — which is the honest
+   * outcome anyway, just an expensive one. Default OFF so nobody hits a wall
+   * they did not ask for; the ladder always enforces it regardless.
+   */
+  enforceDepthCap: boolean;
   /** Quick amounts as a % of bankroll rather than fixed dollars. */
   quickMode: 'dollars' | 'percent';
   quickPercents: number[];
@@ -178,6 +196,7 @@ export const DEFAULT_SETTINGS: Settings = {
   keyboardTrading: true,
   doubleTapToPlace: false,
   turboMode: false,
+  enforceDepthCap: false,
   quickMode: 'dollars',
   quickPercents: [1, 2, 5, 10],
   competeOptIn: false,
@@ -332,10 +351,22 @@ export function summarize(state: LocalState) {
     tradeCount: filled.length,
     totalFees: round6(filled.reduce((s, o) => s + o.fee, 0)),
     marketsTraded: new Set(filled.map((o) => o.marketKey)).size,
-    winRate:
-      settled.length > 0
-        ? settled.filter((p) => p.outcomeResult === true).length / settled.length
-        : null,
+    /**
+     * Share of finished positions that made money.
+     *
+     * Counts anything CLOSED, not only markets that resolved. Waiting for
+     * resolution meant this read "--" for days on end — most positions are
+     * closed by selling long before the event settles, and a trade you sold at
+     * a profit is a win by any reading.
+     */
+    winRate: (() => {
+      const finished = state.positions.filter((p) => !p.isOpen);
+      if (finished.length === 0) return null;
+      const won = finished.filter((p) =>
+        p.settledAt ? p.outcomeResult === true : p.realizedPnl > 0,
+      ).length;
+      return won / finished.length;
+    })(),
     peakEquity: Math.max(state.peakEquity, equity),
     /** Last five resolved markets, newest first — the pill's streak dots. */
     recentResults: settled

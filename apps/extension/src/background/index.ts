@@ -10,7 +10,14 @@
  * every mutation of the portfolio — the local stand-in for a row lock.
  */
 
-import { buildQuote, submitOrder, markPositions, settleLocal, OrderError } from '../lib/engine';
+import {
+  buildQuote,
+  submitOrder,
+  markPositions,
+  settleLocal,
+  closePosition,
+  OrderError,
+} from '../lib/engine';
 import { fetchBook, resolveUrl, searchMarkets, trending } from '../lib/resolve';
 import { loadState, mutate, freshState, saveState, marketKey, summarize } from '../lib/store';
 import { buildRecord } from '../lib/record';
@@ -192,11 +199,44 @@ async function handle(req: Request): Promise<unknown> {
       return { order, state };
     }
 
+    case 'UNDO_ORDER': {
+      // Reverse the fill at the price it filled at, within the undo window.
+      const state = await loadState();
+      const order = state.orders.find((o) => o.id === req.orderId);
+      if (!order || order.side !== 'buy') {
+        throw new OrderError('not_undoable', 'That order can no longer be undone.');
+      }
+      if (Date.now() - new Date(order.ts).getTime() > 15_000) {
+        throw new OrderError('not_undoable', 'The undo window has passed — that is a real trade now.');
+      }
+      const { book } = await fetchBook(req.meta);
+      return closePosition({
+        meta: req.meta,
+        outcome: order.outcome,
+        book,
+        realism: order.realism,
+        qty: order.qtyFilled,
+        atPrice: order.avgPrice,
+      });
+    }
+
+    case 'CLOSE_POSITION': {
+      const s2 = await loadState();
+      const { book } = await fetchBook(req.meta);
+      return closePosition({
+        meta: req.meta,
+        outcome: req.outcome,
+        book,
+        realism: s2.settings.realism,
+        ...(req.qty != null ? { qty: req.qty } : {}),
+      });
+    }
+
     case 'SETTLE_CHECK':
       return settlementSweep();
 
     case 'TOGGLE_WATCH':
-      return { watched: await toggleWatch(req.meta, req.mid) };
+      return { watched: await toggleWatch(req.meta, req.mid ?? null, req.sourceUrl) };
 
     case 'OPEN_MARKET':
       await openMarket(req.url);

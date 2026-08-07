@@ -151,6 +151,7 @@ function assertNotResolved(ladder: Ladder): void {
 
 export interface PriceOpts {
   book: NormalizedBook;
+  /** Overrides the depth cap. Sells never cap: exiting must always be possible. */
   meta: MarketMeta;
   side: OrderSide;
   outcome: OutcomeSide;
@@ -569,5 +570,149 @@ export async function settleLocal(
       settled++;
     }
     return settled;
+  });
+}
+
+
+/**
+ * Sell out of a position, in full or in part.
+ *
+ * This is the same walk as a buy, pointed at the bid ladder — selling YES hits
+ * the YES bids, it is not the same thing as buying NO. The depth cap never
+ * applies to a sell: capping an exit would trap someone in a position they
+ * asked to leave, which is a far worse failure than a bad average.
+ *
+ * `atPrice` exists for Undo. Reversing a fill within seconds should return the
+ * exact cash it cost, not whatever the book drifted to in the meantime —
+ * otherwise "undo" quietly becomes a trade of its own.
+ */
+export async function closePosition(opts: {
+  meta: MarketMeta;
+  outcome: OutcomeSide;
+  book: NormalizedBook;
+  realism: SimRealism;
+  qty?: number;
+  atPrice?: number;
+}): Promise<StoredOrder> {
+  const { meta, outcome, book, realism } = opts;
+  const key = marketKey(meta.venue, meta.venueMarketId);
+
+  return mutate<StoredOrder>(async (state) => {
+    const pos = findPosition(state, key, outcome);
+    if (!pos || pos.qty <= 0) {
+      throw new OrderError('insufficient_position', 'You do not hold this any more.');
+    }
+
+    const qty = round2(Math.min(opts.qty ?? pos.qty, pos.qty));
+    if (!(qty > 0)) {
+      throw new OrderError('below_min_size', 'Nothing left to sell here.');
+    }
+
+    let avgPrice: number;
+    let proceeds: number;
+    let fills: { price: number; qty: number; notional: number }[];
+    let bookMid: number | null;
+    let slippage = 0;
+
+    if (opts.atPrice != null) {
+      // Undo: unwind at the price it filled at.
+      avgPrice = opts.atPrice;
+      proceeds = round6((qty * avgPrice) / 100);
+      fills = [{ price: avgPrice, qty, notional: proceeds }];
+      bookMid = midPrice(ladderFor(book, outcome));
+    } else {
+      const priced = priceOrder({
+        book,
+        meta,
+        side: 'sell',
+        outcome,
+        realism,
+        target: { kind: 'qty', qty },
+        enforceDepthCap: false,
+      });
+      avgPrice = priced.walk.avgPrice;
+      proceeds = priced.walk.cost;
+      fills = priced.walk.fills;
+      bookMid = priced.bookMid;
+      slippage = priced.slippage;
+    }
+
+    const fee =
+      opts.atPrice != null
+        ? 0 // an undo charges nothing; it is a correction, not a round trip
+        : computeFee(
+            parseFeeModel(FEE_MODELS[meta.venue] ?? { kind: 'none' }),
+            qty,
+            avgPrice,
+            'sell',
+            REALISM[realism].feeMultiplier,
+          );
+
+    const basisOut = round6((qty * pos.avgEntryPrice) / 100);
+    const realized = round6(proceeds - basisOut - fee);
+    const now = new Date().toISOString();
+
+    pos.qty = round2(pos.qty - qty);
+    pos.costBasis = pos.qty > 0 ? round6(Math.max(0, pos.costBasis - basisOut)) : 0;
+    pos.realizedPnl = round6(pos.realizedPnl + realized);
+    pos.feesPaid = round6(pos.feesPaid + fee);
+    pos.markPrice = bookMid;
+    if (pos.qty <= 0) {
+      pos.isOpen = false;
+      pos.closedAt = now;
+    }
+
+    pushTxn(state, 'fill_credit', proceeds, `Sell ${qty} ${outcome.toUpperCase()} @ ${avgPrice}¢`);
+    if (fee > 0) pushTxn(state, 'fee', -fee, 'Trading fee');
+
+    const ladder = ladderFor(book, outcome);
+    const order: StoredOrder = {
+      id: crypto.randomUUID(),
+      ts: now,
+      venue: meta.venue,
+      marketKey: key,
+      question: meta.question,
+      side: 'sell',
+      outcome,
+      status: 'filled',
+      qtyRequested: qty,
+      qtyFilled: qty,
+      avgPrice,
+      quotedPrice: avgPrice,
+      cost: proceeds,
+      fee,
+      realized,
+      slippageBps: slippage,
+      latencyMs: 0,
+      realism,
+      fills,
+      bookSnapshot: {
+        capturedAt: new Date(book.capturedAt).toISOString(),
+        bids: ladder.bids.slice(0, 12) as [number, number][],
+        asks: ladder.asks.slice(0, 12) as [number, number][],
+        mid: bookMid,
+      },
+    };
+
+    state.chain ??= [];
+    state.chain.push(
+      await appendLink(state.chain[state.chain.length - 1] ?? null, {
+        kind: 'sell',
+        orderId: order.id,
+        marketKey: key,
+        outcome,
+        qty,
+        price: avgPrice,
+        proceeds,
+        fee,
+        realized,
+        balanceAfter: state.cash,
+        ts: now,
+      }),
+    );
+
+    state.orders.unshift(order);
+    if (state.orders.length > 500) state.orders.length = 500;
+    return order;
   });
 }
