@@ -335,3 +335,11 @@ button.action { border-radius: 10px; }
 .ghostbtn { background: none; border: 1px solid var(--border); color: var(--muted);
   border-radius: 8px; padding: 4px 9px; font: inherit; font-size: 10.5px; cursor: pointer; }
 .ghostbtn:hover { color: var(--no); border-color: var(--no); }
+
+/* Popout window: no tab strip, so the app supplies its own compact chrome. */
+body:has(#root[data-popout]) { overflow-y: auto; }
+#root[data-popout] header { padding: 12px 14px 0; }
+#root[data-popout] .equity { font-size: 26px; }
+#root[data-popout] nav { padding: 8px 10px 0; }
+#root[data-popout] nav button { font-size: 11px; padding: 6px 8px; }
+#root[data-popout] main { padding: 12px 14px 24px; }

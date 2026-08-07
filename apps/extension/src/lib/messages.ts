@@ -26,6 +26,7 @@ export type Request =
   | { type: 'SETTLE_CHECK' }
   | { type: 'WATCH_HAS'; meta: MarketMeta }
   | { type: 'GET_SUMMARY' }
+  | { type: 'POPOUT' }
   | { type: 'OPEN_MARKET'; url: string }
   | { type: 'UNDO_ORDER'; orderId: string; meta: MarketMeta }
   | { type: 'CLOSE_POSITION'; meta: MarketMeta; outcome: 'yes' | 'no'; qty?: number }

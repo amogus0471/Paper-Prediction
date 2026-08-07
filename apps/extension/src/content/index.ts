@@ -68,6 +68,8 @@ let streak: boolean[] = [];
 let lastDragEnd = 0;
 let lastSideKey: 'yes' | 'no' | null = null;
 let lastSideKeyAt = 0;
+/** True when this market is the pinned one. */
+let pinned = false;
 
 /** Stable references into the built DOM, so paint() never queries. */
 interface Nodes {
@@ -195,6 +197,35 @@ ${ODOMETER_CSS}
 .card.wide .tick  { grid-area: tick; align-self: stretch; }
 .card.wide .extra { grid-area: extra; }
 .card.wide .go    { grid-area: go; }
+
+/* NARROW. Below ~300px the default paddings and type sizes stop fitting and
+   controls visibly collide — reported repeatedly as "buttons smushed". These
+   are driven by a class rather than a media query because the panel is sized
+   by a CSS variable, not by the viewport, so @media never fires. */
+.card.tight .body { padding: 9px 9px 10px; gap: 7px; }
+.card.tight .head { padding: 8px 9px; gap: 5px; }
+.card.tight .head .nm { font-size: 10px; letter-spacing: .02em; }
+.card.tight .sim { font-size: 7px; padding: 1px 3px; }
+.card.tight .q { font-size: 11px; -webkit-line-clamp: 2; }
+.card.tight .sides { gap: 5px; }
+.card.tight .side { padding: 7px 3px; border-radius: 9px; }
+.card.tight .side .t { font-size: 8px; letter-spacing: .03em; }
+.card.tight .side .p { font-size: 15px; }
+.card.tight .amt { padding: 0 8px; border-radius: 9px; }
+.card.tight .amt input { font-size: 13px; padding: 7px 4px; }
+.card.tight .chips { gap: 4px; }
+.card.tight .chip { font-size: 9.5px; padding: 5px 0; border-radius: 7px; }
+.card.tight .tick { padding: 7px 8px; gap: 3px; }
+.card.tight .r { font-size: 10px; }
+.card.tight .r.big > span:last-child { font-size: 14px; }
+.card.tight .r.lead > span:last-child { font-size: 13px; }
+.card.tight .go { padding: 9px; font-size: 12px; border-radius: 9px; }
+.card.tight .dd-btn { padding: 6px 8px; }
+.card.tight .dd-btn .lbl { font-size: 10.5px; }
+/* The grip is a 26px target on a 264px panel; shrink it so it stops eating
+   the corner of the place button. */
+.card.tight .grip { width: 18px; height: 18px; }
+.card.tight .egrip { display: none; }
 
 .q { font-size: 12.5px; font-weight: 600; line-height: 1.35; color: #C9D2E0; cursor: pointer;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -511,12 +542,16 @@ function buildPanel(): void {
   const card = el('div', 'card');
   card.style.setProperty('--w', `${overlayWidth}px`);
   if (overlayWidth > 380) card.classList.add('wide');
+  if (overlayWidth < 300) card.classList.add('tight');
   if (market.siblings.length <= 1) card.classList.add('nodd');
 
   // header
   const head = el('div', 'head');
   const star = el('button', 'ico');
   star.title = 'Save to watchlist';
+  const pin = el('button', 'ico');
+  pin.title = 'Pin this market so it follows you across pages';
+  pin.textContent = '📌';
   const collapse = el('button', 'ico', '−');
   collapse.title = 'Minimise';
   head.append(
@@ -524,6 +559,7 @@ function buildPanel(): void {
     el('span', 'nm', 'PAPER PREDICTIONS'),
     el('span', 'sim', 'SIM'),
     el('span', 'grow'),
+    pin,
     star,
     collapse,
   );
@@ -671,6 +707,7 @@ function buildPanel(): void {
     rebuild();
   });
   star.addEventListener('click', () => void toggleWatch());
+  pin.addEventListener('click', () => void togglePin(pin));
   question.addEventListener('click', () => window.open(location.href, '_blank', 'noopener'));
   yesBtn.addEventListener('click', () => pickSide('yes'));
   noBtn.addEventListener('click', () => pickSide('no'));
@@ -1020,6 +1057,29 @@ function showError(e: Error & { code?: string; detail?: string }): void {
   toast(friendlyError(e.code, e.message, e.detail), 'bad', 4200);
 }
 
+/**
+ * Pin the current market so the popup keeps showing it on other pages.
+ *
+ * Unpinning is the same button, so there is no way to strand yourself with a
+ * pinned market you cannot reach.
+ */
+async function togglePin(btn: HTMLElement): Promise<void> {
+  if (!meta) return;
+  const on = !pinned;
+  pinned = on;
+  btn.classList.toggle('on', on);
+  try {
+    await send({
+      type: 'SET_SETTINGS',
+      patch: { pinnedMarket: on ? { meta, url: location.href } : null },
+    });
+    toast(on ? 'Pinned — this market follows you now' : 'Unpinned', 'ok', 1900);
+  } catch {
+    pinned = !on;
+    btn.classList.toggle('on', pinned);
+  }
+}
+
 async function toggleWatch(): Promise<void> {
   if (!meta) return;
   watched = !watched;
@@ -1173,12 +1233,35 @@ async function sync(): Promise<void> {
     next = null;
   }
 
+  // No market on this page? Fall back to the pinned one, if there is one.
+  // That is the whole point of pinning: keep one market in view while you
+  // browse elsewhere on the venue.
+  if (!next && settings?.pinnedMarket) {
+    const p = settings.pinnedMarket as { meta: MarketMeta };
+    if (p.meta) {
+      meta = p.meta;
+      market = { meta: p.meta, siblings: [{ meta: p.meta, mid: null }] };
+      pinned = true;
+      mount();
+      rebuild();
+      void refreshBook();
+      void refreshPnl();
+      requestQuote();
+      startPolling();
+      return;
+    }
+  }
+
   if (!next) {
     market = null;
     meta = null;
     unmount();
     return;
   }
+
+  pinned =
+    !!settings?.pinnedMarket &&
+    (settings.pinnedMarket as { meta?: MarketMeta }).meta?.venueMarketId === next.meta.venueMarketId;
 
   const changed = next.meta.venueMarketId !== meta?.venueMarketId;
   market = next;

@@ -806,6 +806,22 @@ function SettingsView({ state, onChange }: { state: LocalState; onChange: () => 
           checked={state.settings.keyboardTrading}
           onChange={(v) => void set({ keyboardTrading: v })}
         />
+        <div className="row" style={{ alignItems: 'flex-start', paddingBottom: 8 }}>
+          <div style={{ flex: 1 }}>
+            <div className="t">Trade beside a livestream</div>
+            <div className="d">
+              Opens a small always-on-top window with no tab strip, so you can keep
+              trading while a stream or a fullscreen chart has the rest of the screen.
+            </div>
+          </div>
+          <button
+            className="action"
+            style={{ width: 'auto', flex: '0 0 auto', fontSize: 11 }}
+            onClick={() => void send({ type: 'POPOUT' })}
+          >
+            Open
+          </button>
+        </div>
         <Toggle
           label="Freeze decided markets"
           desc="Blocks trading once a market is priced at 97c or above (or 3c and below) with a tight spread. At that point the outcome is public and the venue simply has not settled yet, so buying collects rather than forecasts. The ladder always enforces this regardless."
@@ -953,7 +969,12 @@ function Toggle({
   );
 }
 
-createRoot(document.getElementById('root')!).render(
+const rootEl = document.getElementById('root')!;
+// The popout window is the same app in a smaller frame; the attribute lets CSS
+// tighten the chrome without a second bundle.
+if (location.hash === '#popout') rootEl.dataset.popout = '1';
+
+createRoot(rootEl).render(
   <StrictMode>
     <App />
   </StrictMode>,

@@ -243,6 +243,32 @@ async function handle(req: Request): Promise<unknown> {
       await openMarket(req.url);
       return { ok: true };
 
+    case 'POPOUT': {
+      // A small always-visible window, for trading beside a livestream or a
+      // fullscreen chart. chrome.windows type:'popup' has no tab strip or
+      // omnibox, so it reads as a widget rather than a browser window.
+      const url = chrome.runtime.getURL(DASHBOARD) + '#popout';
+      const { popoutId } = await chrome.storage.local.get('popoutId');
+      if (typeof popoutId === 'number') {
+        try {
+          await chrome.windows.update(popoutId, { focused: true });
+          return { ok: true };
+        } catch {
+          // Closed since; fall through.
+        }
+      }
+      const win = await chrome.windows.create({
+        url,
+        type: 'popup',
+        width: 360,
+        height: 620,
+        top: 90,
+        left: 90,
+      });
+      if (win.id != null) await chrome.storage.local.set({ popoutId: win.id });
+      return { ok: true };
+    }
+
     case 'GET_SUMMARY':
       return summarize(await loadState());
 

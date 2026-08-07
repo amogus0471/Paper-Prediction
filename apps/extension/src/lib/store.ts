@@ -142,6 +142,14 @@ export interface Settings {
    */
   turboMode: boolean;
   /**
+   * A market pinned to follow you across pages.
+   *
+   * When set, the popup shows this market everywhere on a supported venue
+   * instead of only on its own page — so you can watch one market while
+   * browsing others.
+   */
+  pinnedMarket: { meta: unknown; url: string } | null;
+  /**
    * Enforce the 5%-of-visible-depth cap.
    *
    * On, a big order into a thin book is refused. Off, it fills against
@@ -204,6 +212,7 @@ export const DEFAULT_SETTINGS: Settings = {
   keyboardTrading: true,
   doubleTapToPlace: false,
   turboMode: false,
+  pinnedMarket: null,
   enforceDepthCap: false,
   resolutionLockout: false,
   quickMode: 'dollars',
