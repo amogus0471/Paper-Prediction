@@ -42,13 +42,11 @@ const DASHBOARD = 'src/sidepanel/index.html';
 chrome.action.onClicked.addListener(async () => {
   const url = chrome.runtime.getURL(DASHBOARD);
 
-  // Remember the tab we opened and try to reuse it.
+  // Reuse the dashboard tab we opened before.
   //
-  // The obvious `chrome.tabs.query({ url })` needs the "tabs" permission to
-  // match on URL — without it the filter silently yields [] and every click
-  // opened yet another dashboard. Rather than widen permissions (and the Web
-  // Store review surface) just to de-duplicate a tab, keep the id and let
-  // tabs.update fail if the tab is gone.
+  // The obvious chrome.tabs.query({ url }) needs the "tabs" permission to match
+  // on URL; without it the filter silently yields [] and every click opened yet
+  // another dashboard. Keeping the id costs no permission at all.
   const { dashboardTabId } = await chrome.storage.local.get('dashboardTabId');
   if (typeof dashboardTabId === 'number') {
     try {
@@ -56,13 +54,41 @@ chrome.action.onClicked.addListener(async () => {
       if (tab?.windowId != null) await chrome.windows.update(tab.windowId, { focused: true });
       return;
     } catch {
-      // Tab was closed since; fall through and open a fresh one.
+      // Closed since — fall through and open a fresh one.
     }
   }
 
   const created = await chrome.tabs.create({ url });
   if (created.id != null) await chrome.storage.local.set({ dashboardTabId: created.id });
 });
+
+/**
+ * Open a market URL, reusing an already-loaded venue tab when Turbo is on.
+ *
+ * A cold Polymarket page load is seconds of JS; navigating a tab that already
+ * has the app warm is near-instant. Only ever reuses a tab already on the same
+ * venue — never a random tab of yours.
+ */
+async function openMarket(url: string): Promise<void> {
+  const settings = (await loadState()).settings;
+  if (settings.turboMode) {
+    const host = new URL(url).hostname;
+    const tabs = await chrome.tabs.query({});
+    const warm = tabs.find((t) => {
+      try {
+        return t.url != null && new URL(t.url).hostname === host;
+      } catch {
+        return false;
+      }
+    });
+    if (warm?.id != null) {
+      await chrome.tabs.update(warm.id, { url, active: true });
+      if (warm.windowId != null) await chrome.windows.update(warm.windowId, { focused: true });
+      return;
+    }
+  }
+  await chrome.tabs.create({ url });
+}
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'settle-check') {
@@ -171,6 +197,10 @@ async function handle(req: Request): Promise<unknown> {
 
     case 'TOGGLE_WATCH':
       return { watched: await toggleWatch(req.meta, req.mid) };
+
+    case 'OPEN_MARKET':
+      await openMarket(req.url);
+      return { ok: true };
 
     case 'GET_SUMMARY':
       return summarize(await loadState());

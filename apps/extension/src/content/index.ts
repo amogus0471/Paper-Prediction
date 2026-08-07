@@ -60,6 +60,10 @@ let watched = false;
 let pollTimer: number | undefined;
 let quoteTimer: number | undefined;
 let structureKey = '';
+/** Chosen popup width. Kept here so switching markets never resets the size. */
+let overlayWidth = 300;
+/** Last five resolved outcomes, newest first, for the pill's streak dots. */
+let streak: boolean[] = [];
 
 /** Stable references into the built DOM, so paint() never queries. */
 interface Nodes {
@@ -86,6 +90,7 @@ interface PillNodes {
   px: Odometer;
   pnl: Odometer;
   label: HTMLSpanElement;
+  streak: HTMLDivElement;
 }
 let pn: PillNodes | null = null;
 
@@ -111,20 +116,20 @@ ${ODOMETER_CSS}
   background: linear-gradient(135deg, rgba(19,24,33,.97), rgba(13,16,23,.97));
   backdrop-filter: blur(14px);
   border: 1px solid var(--line); border-left: 2px solid var(--blue);
-  border-radius: 999px; padding: 9px 16px 9px 12px;
-  box-shadow: 0 10px 34px rgba(0,0,0,.55);
-  transition: border-color .2s, box-shadow .2s;
-  min-width: 232px;
+  border-radius: 12px; padding: 9px 14px 9px 11px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.5);
+  transition: border-color .2s;
+  min-width: 300px;
 }
-.pill:hover { border-color: var(--blue); box-shadow: 0 12px 40px rgba(59,130,246,.22); }
+.pill:hover { border-color: var(--blue); }
 .pill:active { cursor: grabbing; }
 .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--blue); flex: 0 0 auto;
-  animation: pulse 2.4s infinite; }
-@keyframes pulse {
-  0% { box-shadow: 0 0 0 0 rgba(59,130,246,.5); }
-  70% { box-shadow: 0 0 0 8px rgba(59,130,246,0); }
-  100% { box-shadow: 0 0 0 0 rgba(59,130,246,0); }
-}
+  animation: fade 2.4s infinite; }
+@keyframes fade { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+.pill .streak { display: flex; gap: 3px; align-items: center; }
+.pill .streak b { width: 6px; height: 6px; border-radius: 50%; background: var(--line); }
+.pill .streak b.w { background: var(--up); }
+.pill .streak b.l { background: var(--down); }
 .pill .stack { display: grid; gap: 1px; line-height: 1.15; min-width: 0; }
 .pill .k { font-size: 8.5px; color: var(--mute); letter-spacing: .07em; font-weight: 700; }
 .pill .v { font-size: 14px; font-weight: 700; }
@@ -149,7 +154,7 @@ ${ODOMETER_CSS}
   border-bottom: 1px solid var(--line); }
 .head:active { cursor: grabbing; }
 .head .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--blue); }
-.head .nm { font-size: 10.5px; font-weight: 800; letter-spacing: .06em; }
+.head .nm { font-size: 12.5px; font-weight: 800; letter-spacing: .04em; }
 .sim { font-size: 8px; font-weight: 800; letter-spacing: .08em; color: #93B4FD;
   border: 1px solid #1D4ED8; border-radius: 4px; padding: 1px 5px; }
 .grow { flex: 1; }
@@ -160,6 +165,17 @@ ${ODOMETER_CSS}
 .ico.on { color: #FBBF24; }
 
 .body { padding: 12px 13px 13px; display: grid; gap: 10px; }
+/* Past ~380px the panel becomes two columns: trade controls left, live
+   numbers right. Stretching a single column just makes long thin rows. */
+.card.wide .body { grid-template-columns: 1fr 1fr; align-items: start;
+  column-gap: 12px; }
+.card.wide .q, .card.wide .dd, .card.wide .go { grid-column: 1 / -1; }
+.card.wide .sides { grid-column: 1; }
+.card.wide .amt { grid-column: 1; }
+.card.wide .chips { grid-column: 1; }
+.card.wide .tick { grid-column: 2; grid-row: 3 / span 3; align-self: stretch; }
+.card.wide .extra { grid-column: 2; }
+.card.wide .head .nm { font-size: 12px; }
 
 .q { font-size: 12.5px; font-weight: 600; line-height: 1.35; color: #C9D2E0; cursor: pointer;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -241,33 +257,37 @@ ${ODOMETER_CSS}
 .go.pending { background: var(--blue); color: #fff; }
 
 /* Resize grip — the corner lines that say "this is expandable". */
-.grip { position: absolute; right: 3px; bottom: 3px; width: 15px; height: 15px;
-  cursor: nwse-resize; opacity: .5; transition: opacity .15s; }
+.grip { position: absolute; right: 0; bottom: 0; width: 26px; height: 26px;
+  cursor: nwse-resize; opacity: .55; transition: opacity .15s; }
 .grip:hover { opacity: 1; }
-.grip::before, .grip::after { content: ''; position: absolute; right: 3px;
-  background: var(--mute); height: 1.5px; border-radius: 1px; }
-.grip::before { width: 9px; bottom: 3px; transform: rotate(-45deg);
-  transform-origin: right center; }
-.grip::after { width: 5px; bottom: 6px; transform: rotate(-45deg);
-  transform-origin: right center; }
+.grip::before, .grip::after { content: ''; position: absolute; right: 5px;
+  background: var(--blue2); height: 2px; border-radius: 2px; }
+.grip::before { width: 15px; bottom: 5px; transform: rotate(-45deg); transform-origin: right center; }
+.grip::after  { width: 9px;  bottom: 10px; transform: rotate(-45deg); transform-origin: right center; }
+/* Side grip: drag width only, without reaching for the corner. */
+.egrip { position: absolute; right: 0; top: 46px; bottom: 26px; width: 9px;
+  cursor: ew-resize; display: flex; align-items: center; justify-content: center; }
+.egrip::before { content: ''; width: 2px; height: 26px; border-radius: 2px;
+  background: var(--line); transition: background .15s; }
+.egrip:hover::before { background: var(--blue2); }
 
 /* ── toasts ─────────────────────────────────────────────────────────────── */
-.toasts { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
-  z-index: 2147483601; display: grid; gap: 6px; justify-items: center; }
-.toast { display: flex; align-items: center; gap: 8px; padding: 10px 16px;
-  background: rgba(13,16,23,.97); backdrop-filter: blur(12px);
-  border: 1px solid var(--line); border-radius: 999px; font-size: 12px; font-weight: 600;
-  box-shadow: 0 12px 36px rgba(0,0,0,.6); animation: tIn .22s cubic-bezier(.2,.8,.2,1);
-  white-space: nowrap; }
+.toasts { position: absolute; z-index: 2147483601; display: grid; gap: 5px; }
+.toast { display: flex; align-items: flex-start; gap: 7px; padding: 7px 10px;
+  background: rgba(13,16,23,.98); backdrop-filter: blur(12px);
+  border: 1px solid var(--line); border-radius: 10px;
+  font-family: inherit; font-size: 11px; font-weight: 500; line-height: 1.35;
+  box-shadow: 0 8px 24px rgba(0,0,0,.55); animation: tIn .2s cubic-bezier(.2,.8,.2,1); }
+.toast .ic { flex: 0 0 auto; font-weight: 700; }
 .toast.out { animation: tOut .2s forwards; }
-@keyframes tIn { from { opacity: 0; transform: translateY(12px) scale(.94); } }
-@keyframes tOut { to { opacity: 0; transform: translateY(-6px) scale(.97); } }
+@keyframes tIn { from { opacity: 0; transform: translateY(-6px); } }
+@keyframes tOut { to { opacity: 0; transform: translateY(-4px); } }
 .toast .sp { width: 11px; height: 11px; border-radius: 50%;
   border: 2px solid rgba(59,130,246,.28); border-top-color: var(--blue);
   animation: spin .6s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.toast.ok { border-color: rgba(34,197,94,.5); color: var(--up); }
-.toast.bad { border-color: rgba(239,68,68,.5); color: #FCA5A5; }
+.toast.ok { border-color: rgba(34,197,94,.45); color: #6EE7A0; }
+.toast.bad { border-color: rgba(239,68,68,.45); color: #FCA5A5; }
 
 canvas.confetti { position: fixed; inset: 0; pointer-events: none; z-index: 2147483602; }
 .up { color: var(--up); } .down { color: var(--down); }
@@ -286,14 +306,19 @@ function toast(text: string, kind: 'pending' | 'ok' | 'bad', ms = 2600): () => v
   if (!toastHost) {
     toastHost = document.createElement('div');
     toastHost.className = 'toasts';
-    shadow.appendChild(toastHost);
+    // Inside .wrap, so messages sit directly under the popup and follow it
+    // when dragged, instead of floating in the middle of someone else's page.
+    toastHost.style.top = 'calc(100% + 7px)';
+    toastHost.style.left = '0';
+    toastHost.style.width = '100%';
+    (wrap ?? shadow).appendChild(toastHost);
   }
   const el = document.createElement('div');
   el.className = `toast ${kind === 'pending' ? '' : kind}`;
   el.innerHTML =
     kind === 'pending'
       ? `<span class="sp"></span><span></span>`
-      : `<span>${kind === 'ok' ? '✓' : '!'}</span><span></span>`;
+      : `<span class="ic">${kind === 'ok' ? '✓' : '!'}</span><span></span>`;
   el.lastElementChild!.textContent = text;
   toastHost.appendChild(el);
 
@@ -391,10 +416,19 @@ function buildPill(): void {
   priceK.replaceWith(label);
   label.textContent = 'PRICE';
 
-  root.append(el('span', 'dot'), priceStack, el('span', 'sep'), pnlStack, el('span', 'grow'), el('span', 'open', '⌃'));
+  const streakEl = el('div', 'streak');
+  root.append(
+    el('span', 'dot'),
+    priceStack,
+    el('span', 'sep'),
+    pnlStack,
+    el('span', 'grow'),
+    streakEl,
+    el('span', 'open', '⌃'),
+  );
   wrap.appendChild(root);
 
-  pn = { root, px, pnl: pnlOdo, label };
+  pn = { root, px, pnl: pnlOdo, label, streak: streakEl };
 
   root.addEventListener('mousedown', (e) => drag(e as MouseEvent, root));
   root.addEventListener('click', (e) => {
@@ -411,7 +445,8 @@ function buildPanel(): void {
   pn = null;
 
   const card = el('div', 'card');
-  card.style.setProperty('--w', `${settings?.overlayWidth ?? 300}px`);
+  card.style.setProperty('--w', `${overlayWidth}px`);
+  if (overlayWidth > 380) card.classList.add('wide');
 
   // header
   const head = el('div', 'head');
@@ -507,8 +542,10 @@ function buildPanel(): void {
 
   const grip = el('div', 'grip');
   grip.title = 'Drag to resize';
+  const egrip = el('div', 'egrip');
+  egrip.title = 'Drag to resize';
 
-  card.append(head, body, grip);
+  card.append(head, body, egrip, grip);
   wrap.appendChild(card);
 
   n = {
@@ -545,6 +582,7 @@ function buildPanel(): void {
   });
   go.addEventListener('click', () => void place());
   grip.addEventListener('mousedown', (e) => resize(e as MouseEvent, card));
+  egrip.addEventListener('mousedown', (e) => resize(e as MouseEvent, card));
   // Close the dropdown on an outside click without a document-wide listener war.
   card.addEventListener('click', (e) => {
     if (picker && !picker.contains(e.target as Node)) picker.classList.remove('open');
@@ -557,16 +595,29 @@ function buildPanel(): void {
 function buildChips(): void {
   if (!n) return;
   n.chips.textContent = '';
-  for (const v of (settings?.quickAmounts ?? [25, 50, 100, 250]).slice(0, 4)) {
-    const b = el('button', 'chip', String(v));
+
+  // Percent mode sizes against the live bankroll, so the presets mean the same
+  // thing whether you are up or down — which is the point of position sizing.
+  const percent = settings?.quickMode === 'percent';
+  const bankroll = pnl?.equity ?? 10000;
+  const values = percent
+    ? (settings?.quickPercents ?? [1, 2, 5, 10]).map((p) => Math.max(1, Math.round((bankroll * p) / 100)))
+    : (settings?.quickAmounts ?? [25, 50, 100, 250]);
+  const labels = percent
+    ? (settings?.quickPercents ?? [1, 2, 5, 10]).map((p) => `${p}%`)
+    : values.map((v) => String(v));
+
+  values.slice(0, 4).forEach((v, i) => {
+    const b = el('button', 'chip', labels[i] ?? String(v));
+    b.title = percent ? `${labels[i]} of your P$${bankroll.toFixed(0)} balance` : `P$${v}`;
     b.addEventListener('click', () => {
       amount = v;
       n!.amtInput.value = String(v);
       playSound('tick', settings?.soundVolume ?? 0.35, settings?.soundEnabled ?? true);
       requestQuote();
     });
-    n.chips.appendChild(b);
-  }
+    n!.chips.appendChild(b);
+  });
 }
 
 function pickSide(o: 'yes' | 'no'): void {
@@ -601,6 +652,15 @@ function paint(): void {
       pn.pnl.set(money(pnl.delta));
       pn.pnl.el.className = `odo ${pnl.delta >= 0 ? 'up' : 'down'}`;
     }
+    // Last five resolved markets as dots. Ambient: you read your recent form
+    // without opening anything.
+    if (pn.streak.children.length !== streak.length) {
+      pn.streak.textContent = '';
+      for (const won of streak) {
+        const b = el('b', won ? 'w' : 'l');
+        pn.streak.appendChild(b);
+      }
+    }
     return;
   }
 
@@ -626,7 +686,7 @@ function paint(): void {
         ['If it wins', `+P$${quote.maxProfit.toFixed(2)}`, 'big'],
         ...(quote.partial ? ([['Partial fill', 'book ran out', 'warn']] as [string, string, string][]) : []),
       ]
-    : [['Enter an amount', '—']];
+    : [];
   syncRows(n.ticket, rows);
 
   const extras: [string, string, string?][] = [];
@@ -699,16 +759,17 @@ function resize(e: MouseEvent, card: HTMLElement): void {
   const startW = card.getBoundingClientRect().width;
 
   const move = (ev: MouseEvent) => {
-    const w = Math.max(280, Math.min(520, startW + (ev.clientX - startX)));
+    const w = Math.max(280, Math.min(620, startW + (ev.clientX - startX)));
     card.style.setProperty('--w', `${w}px`);
-    expanded = w > 360;
+    overlayWidth = w;
+    expanded = w > 380;
+    card.classList.toggle('wide', expanded);
     paint();
   };
   const up = () => {
     removeEventListener('mousemove', move);
     removeEventListener('mouseup', up);
-    const w = card.getBoundingClientRect().width;
-    void send({ type: 'SET_SETTINGS', patch: { overlayWidth: Math.round(w) } }).catch(
+    void send({ type: 'SET_SETTINGS', patch: { overlayWidth: Math.round(overlayWidth) } }).catch(
       () => undefined,
     );
   };
@@ -746,8 +807,13 @@ async function refreshBook(): Promise<void> {
 
 async function refreshPnl(): Promise<void> {
   try {
-    const s = await send<{ equity: number; startingBalance: number }>({ type: 'GET_SUMMARY' });
+    const s = await send<{ equity: number; startingBalance: number; recentResults?: boolean[] }>({
+      type: 'GET_SUMMARY',
+    });
     pnl = { equity: s.equity, delta: s.equity - s.startingBalance };
+    streak = s.recentResults ?? [];
+    // Percent presets are relative to the bankroll, so they move with it.
+    if (settings?.quickMode === 'percent' && n) buildChips();
     paint();
   } catch {
     /* non-fatal */
@@ -922,6 +988,51 @@ async function sync(): Promise<void> {
   startPolling();
 }
 
+/**
+ * Keyboard trading.
+ *
+ * Y/N pick a side, 1-4 pick a preset, Enter places. Deliberately inert while
+ * the host page has focus in a text field — hijacking a keystroke someone
+ * meant for the venue's own search box would be hostile.
+ */
+function bindKeys(): void {
+  addEventListener(
+    'keydown',
+    (e) => {
+      if (!meta || collapsed || !settings?.keyboardTrading) return;
+      const t = e.target as HTMLElement | null;
+      const typing =
+        t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+      // Our own amount box is an input, so allow Enter through from there.
+      const ours = t === n?.amtInput;
+      if (typing && !ours) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      const k = e.key.toLowerCase();
+      if (k === 'y' && !ours) { e.preventDefault(); pickSide('yes'); }
+      else if (k === 'n' && !ours) { e.preventDefault(); pickSide('no'); }
+      else if (/^[1-4]$/.test(k) && !ours) {
+        const v = (settings.quickAmounts ?? [])[Number(k) - 1];
+        if (v != null) {
+          e.preventDefault();
+          amount = v;
+          if (n) n.amtInput.value = String(v);
+          playSound('tick', settings.soundVolume, settings.soundEnabled);
+          requestQuote();
+        }
+      } else if (e.key === 'Enter' && quote && !busy) {
+        e.preventDefault();
+        void place();
+      } else if (e.key === 'Escape') {
+        collapsed = true;
+        structureKey = '';
+        rebuild();
+      }
+    },
+    true,
+  );
+}
+
 function watchNav(): void {
   let last = location.href;
   const fire = () => {
@@ -947,16 +1058,25 @@ function watchNav(): void {
   });
 }
 
-async function boot(): Promise<void> {
+async function boot(attempt = 0): Promise<void> {
   try {
     settings = await send<Settings>({ type: 'GET_SETTINGS' });
   } catch {
+    // The service worker sleeps after ~30s and takes a moment to wake. The old
+    // code gave up silently here, which is why the popup "sometimes" did not
+    // appear — it was whenever the worker happened to be cold. Retry with
+    // backoff instead of losing the page load.
+    if (attempt < 6) {
+      setTimeout(() => void boot(attempt + 1), 300 * 2 ** attempt);
+    }
     return;
   }
   if (!settings.overlayEnabled) return;
   amount = settings.defaultOrderSize || 100;
-  expanded = (settings.overlayWidth ?? 300) > 360;
+  overlayWidth = settings.overlayWidth ?? 300;
+  expanded = overlayWidth > 380;
   watchNav();
+  bindKeys();
   await sync();
 }
 

@@ -323,3 +323,15 @@ button.action { border-radius: 10px; }
 .live i { width: 5px; height: 5px; border-radius: 50%; background: var(--yes);
   animation: lp 2s infinite; font-style: normal; }
 @keyframes lp { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
+
+/* Compact simulation marker.
+   Kept — not decoration. The Chrome Web Store bans extensions that facilitate
+   real-money prediction market trading and carves out an exception only for
+   simulators that clearly indicate no real money is involved. This is that
+   indication, at the smallest size that still reads at a glance. */
+.simchip { font-size: 8.5px; font-weight: 800; letter-spacing: .08em; margin-left: 8px;
+  color: #93b4fd; border: 1px solid #1d4ed8; border-radius: 4px; padding: 1px 5px;
+  vertical-align: 1px; }
+.ghostbtn { background: none; border: 1px solid var(--border); color: var(--muted);
+  border-radius: 8px; padding: 4px 9px; font: inherit; font-size: 10.5px; cursor: pointer; }
+.ghostbtn:hover { color: var(--no); border-color: var(--no); }

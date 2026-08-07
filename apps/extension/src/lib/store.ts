@@ -122,6 +122,17 @@ export interface Settings {
   confettiEnabled: boolean;
   /** Popup width in px. Dragging the corner grip persists it. */
   overlayWidth: number;
+  /** Y/N to pick a side, 1-4 for presets, Enter to place. */
+  keyboardTrading: boolean;
+  /**
+   * Reuse an already-open Polymarket/Kalshi tab instead of spending a cold
+   * page load on a new one. Off by default because it navigates a tab you did
+   * not explicitly hand over.
+   */
+  turboMode: boolean;
+  /** Quick amounts as a % of bankroll rather than fixed dollars. */
+  quickMode: 'dollars' | 'percent';
+  quickPercents: number[];
   competeOptIn: boolean;
   deviceKey: string | null;
   handle: string | null;
@@ -162,6 +173,10 @@ export const DEFAULT_SETTINGS: Settings = {
   quickAmounts: [25, 50, 100, 250],
   confettiEnabled: true,
   overlayWidth: 300,
+  keyboardTrading: true,
+  turboMode: false,
+  quickMode: 'dollars',
+  quickPercents: [1, 2, 5, 10],
   competeOptIn: false,
   deviceKey: null,
   handle: null,
@@ -319,6 +334,12 @@ export function summarize(state: LocalState) {
         ? settled.filter((p) => p.outcomeResult === true).length / settled.length
         : null,
     peakEquity: Math.max(state.peakEquity, equity),
+    /** Last five resolved markets, newest first — the pill's streak dots. */
+    recentResults: settled
+      .slice()
+      .sort((a, b) => (b.settledAt ?? '').localeCompare(a.settledAt ?? ''))
+      .slice(0, 5)
+      .map((p) => p.outcomeResult === true),
   };
 }
 

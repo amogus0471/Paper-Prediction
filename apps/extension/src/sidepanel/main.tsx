@@ -68,7 +68,6 @@ function App() {
   if (error || !state || !record) {
     return (
       <div className="app">
-        <SimBar />
         <main>
           <div className="empty">
             {error ? `Could not reach the ${BRAND.name} worker.` : 'Loading…'}
@@ -83,9 +82,13 @@ function App() {
 
   return (
     <div className="app">
-      <SimBar />
       <header>
-        <div className="handle">{BRAND.name} · lifetime paper account</div>
+        <div className="handle">
+          {BRAND.name}
+          <span className="simchip" title="No real money is involved anywhere in this app.">
+            SIM
+          </span>
+        </div>
         <div className="equity num">{formatSimDollars(s.equity)}</div>
         <div className={`delta num ${s.returnPct > 0 ? 'up' : s.returnPct < 0 ? 'down' : 'flat'}`}>
           {formatSignedSimDollars(s.equity - state.startingBalance)} (
@@ -309,10 +312,21 @@ function Watch({ state, onChange }: { state: LocalState; onChange: () => void })
     <>
       <div className="lbHead">
         <h2>Watchlist</h2>
-        <span className="live">
-          <i />
-          LIVE
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span className="live">
+            <i />
+            LIVE
+          </span>
+          <button
+            className="ghostbtn"
+            onClick={async () => {
+              if (!confirm(`Remove all ${state.watchlist.length} watched markets?`)) return;
+              for (const w of [...state.watchlist]) await unstar(w);
+            }}
+          >
+            Clear all
+          </button>
+        </div>
       </div>
       {state.watchlist.map((w) => (
         <WatchRow
@@ -402,10 +416,16 @@ function WatchRow({
               )}
             </div>
             <div className="wactions">
-              <a href={marketUrl(w)} target="_blank" rel="noopener noreferrer">
+              <button onClick={() => void send({ type: 'OPEN_MARKET', url: marketUrl(w) })}>
                 Open market ↗
-              </a>
-              <button onClick={onUnstar}>Remove</button>
+              </button>
+              <button
+                onClick={() => {
+                  if (confirm(`Stop watching "${w.question.slice(0, 60)}"?`)) onUnstar();
+                }}
+              >
+                Remove
+              </button>
             </div>
           </div>
         </div>
@@ -710,6 +730,42 @@ function SettingsView({ state, onChange }: { state: LocalState; onChange: () => 
           onChange={(v) => void set({ confirmBeforeOrder: v })}
         />
         <label className="field" style={{ marginTop: 11 }}>
+          <span className="lbl">Quick-buy sizing</span>
+          <select
+            value={state.settings.quickMode}
+            onChange={(e) => void set({ quickMode: e.target.value as 'dollars' | 'percent' })}
+          >
+            <option value="dollars">Fixed amounts (P$25, P$50…)</option>
+            <option value="percent">Percent of balance (1%, 2%, 5%…)</option>
+          </select>
+        </label>
+        <div className="note" style={{ marginTop: -6, marginBottom: 10 }}>
+          Percent sizing scales with your balance, so a preset means the same
+          thing whether you are up or down. That is what position sizing is —
+          and it is 35% of what the ladder scores you on.
+        </div>
+        {state.settings.quickMode === 'percent' ? (
+          <label className="field">
+            <span className="lbl">Percent presets</span>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {state.settings.quickPercents.map((v, i) => (
+                <input
+                  key={i}
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={v}
+                  onChange={(e) => {
+                    const next = [...state.settings.quickPercents];
+                    next[i] = Math.max(1, Math.min(20, Number(e.target.value) || 1));
+                    void set({ quickPercents: next });
+                  }}
+                />
+              ))}
+            </div>
+          </label>
+        ) : (
+        <label className="field">
           <span className="lbl">Quick-buy buttons</span>
           <div style={{ display: 'flex', gap: 6 }}>
             {state.settings.quickAmounts.map((v, i) => (
@@ -727,9 +783,22 @@ function SettingsView({ state, onChange }: { state: LocalState; onChange: () => 
             ))}
           </div>
         </label>
+        )}
         <div className="note">
           These are the four one-tap amounts on the market popup.
         </div>
+        <Toggle
+          label="Keyboard trading"
+          desc="Y and N pick a side, 1-4 pick a preset, Enter places, Esc minimises. Ignored while you are typing in the page."
+          checked={state.settings.keyboardTrading}
+          onChange={(v) => void set({ keyboardTrading: v })}
+        />
+        <Toggle
+          label="Turbo open"
+          desc="Opening a market reuses a tab already on that venue instead of paying for a cold page load. Only ever reuses a tab already on Polymarket or Kalshi."
+          checked={state.settings.turboMode}
+          onChange={(v) => void set({ turboMode: v })}
+        />
       </div>
 
       <div className="card">
