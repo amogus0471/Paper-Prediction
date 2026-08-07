@@ -64,10 +64,6 @@ function App() {
     return () => chrome.storage.local.onChanged.removeListener(onChange);
   }, [refresh]);
 
-  useEffect(() => {
-    if (state?.settings.colorblindMode) document.documentElement.dataset.cb = '1';
-    else delete document.documentElement.dataset.cb;
-  }, [state?.settings.colorblindMode]);
 
   if (error || !state || !record) {
     return (
@@ -265,17 +261,18 @@ function PositionCard({ p }: { p: StoredPosition }) {
 // ── Watch ───────────────────────────────────────────────────────────────────
 
 function Watch({ state, onChange }: { state: LocalState; onChange: () => void }) {
-  const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState<string | null>(null);
 
-  const refreshNow = async () => {
-    setBusy(true);
-    try {
-      await send({ type: 'REFRESH_WATCHLIST' });
-      onChange();
-    } finally {
-      setBusy(false);
-    }
-  };
+  // Auto-refresh once a second. React only re-renders the values that changed,
+  // so nothing flickers and an expanded row stays expanded across ticks.
+  useEffect(() => {
+    if (state.watchlist.length === 0) return;
+    const id = setInterval(() => {
+      if (document.hidden) return;
+      void send({ type: 'REFRESH_WATCHLIST' }).then(onChange).catch(() => undefined);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [state.watchlist.length, onChange]);
 
   const unstar = async (w: LocalState['watchlist'][number]) => {
     await send({
@@ -302,7 +299,7 @@ function Watch({ state, onChange }: { state: LocalState; onChange: () => void })
         Nothing on your watchlist.
         <div className="note">
           Star a market from the {BRAND.name} panel on Polymarket or Kalshi. Watched markets
-          refresh more often than browsed ones.
+          refresh once a second while this tab is open.
         </div>
       </div>
     );
@@ -310,43 +307,135 @@ function Watch({ state, onChange }: { state: LocalState; onChange: () => void })
 
   return (
     <>
-      <button className="action" onClick={() => void refreshNow()} disabled={busy}>
-        {busy ? 'Refreshing…' : 'Refresh prices now'}
-      </button>
-      <div style={{ height: 10 }} />
+      <div className="lbHead">
+        <h2>Watchlist</h2>
+        <span className="live">
+          <i />
+          LIVE
+        </span>
+      </div>
       {state.watchlist.map((w) => (
-        <div className="pos" key={w.marketKey}>
-          <div className="q">{w.question}</div>
-          <div className="line" style={{ marginTop: 4 }}>
-            <span>
-              <span className="tag">{w.venue}</span>
-              {w.category ? (
-                <span className="tag" style={{ marginLeft: 4 }}>
-                  {w.category}
-                </span>
-              ) : null}
-            </span>
-            <span className="num bigprice">{w.lastMid != null ? formatCents(w.lastMid) : '--'}</span>
-          </div>
-          <div className="line" style={{ marginTop: 3 }}>
-            <span>{w.closeTime ? `closes ${formatCountdown(w.closeTime)}` : ''}</span>
-            <button className="linkbtn" onClick={() => void unstar(w)}>
-              Unstar
-            </button>
-          </div>
-        </div>
+        <WatchRow
+          key={w.marketKey}
+          w={w}
+          state={state}
+          open={open === w.marketKey}
+          onToggle={() => setOpen(open === w.marketKey ? null : w.marketKey)}
+          onUnstar={() => void unstar(w)}
+        />
       ))}
     </>
   );
 }
 
-// ── Record ──────────────────────────────────────────────────────────────────
+/** Market URLs are stable public routes; deep-linking beats re-searching. */
+function marketUrl(w: LocalState['watchlist'][number]): string {
+  return w.venue === 'polymarket'
+    ? `https://polymarket.com/event/${encodeURIComponent(w.slug ?? w.venueMarketId)}`
+    : `https://kalshi.com/markets/${encodeURIComponent((w.venueMarketId.split('-')[0] ?? '').toLowerCase())}`;
+}
 
-/**
- * Statistical honesty is mandatory here: no headline skill score below n=30, a
- * confidence interval whenever one is shown, and thin categories greyed out
- * rather than presented as findings.
- */
+function WatchRow({
+  w,
+  state,
+  open,
+  onToggle,
+  onUnstar,
+}: {
+  w: LocalState['watchlist'][number];
+  state: LocalState;
+  open: boolean;
+  onToggle: () => void;
+  onUnstar: () => void;
+}) {
+  const mid = w.lastMid;
+  const prev = w.prevMid ?? null;
+  const change = mid != null && prev != null ? mid - prev : null;
+  const history = w.history ?? [];
+  const pos = state.positions.find((p) => p.marketKey === w.marketKey && p.isOpen);
+
+  return (
+    <div className={`wrow ${open ? 'open' : ''}`}>
+      <div className="whead" onClick={onToggle} role="button" aria-expanded={open}>
+        <span className="q">{w.question}</span>
+        <span className="px num">{mid == null ? '--' : `${mid.toFixed(0)}¢`}</span>
+        <span className={`chg num ${change == null ? '' : change > 0 ? 'up' : change < 0 ? 'down' : ''}`}>
+          {change == null || change === 0 ? '' : `${change > 0 ? '▲' : '▼'}${Math.abs(change).toFixed(1)}`}
+        </span>
+        <span className="wcar">▼</span>
+      </div>
+
+      <div className="wbody">
+        <div>
+          <div className="winner">
+            {history.length > 2 && <MiniSpark points={history} />}
+            <div className="wgrid">
+              <div className="wstat">
+                <div className="k">Yes</div>
+                <div className="v num up">{mid == null ? '--' : `${mid.toFixed(0)}¢`}</div>
+              </div>
+              <div className="wstat">
+                <div className="k">No</div>
+                <div className="v num down">{mid == null ? '--' : `${(100 - mid).toFixed(0)}¢`}</div>
+              </div>
+              <div className="wstat">
+                <div className="k">Closes</div>
+                <div className="v num" style={{ fontSize: 13 }}>
+                  {w.closeTime ? formatCountdown(w.closeTime) : '--'}
+                </div>
+              </div>
+              {pos && (
+                <div className="wstat">
+                  <div className="k">Your P&amp;L</div>
+                  <div
+                    className={`v num ${
+                      pos.markPrice != null && (pos.qty * pos.markPrice) / 100 - pos.costBasis >= 0
+                        ? 'up'
+                        : 'down'
+                    }`}
+                  >
+                    {pos.markPrice == null
+                      ? '--'
+                      : formatSignedSimDollars((pos.qty * pos.markPrice) / 100 - pos.costBasis)}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="wactions">
+              <a href={marketUrl(w)} target="_blank" rel="noopener noreferrer">
+                Open market ↗
+              </a>
+              <button onClick={onUnstar}>Remove</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Tiny price history line. Same shape as the equity sparkline, smaller. */
+function MiniSpark({ points }: { points: number[] }) {
+  const w = 300;
+  const h = 40;
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const span = max - min || 1;
+  const d = points
+    .map((p, i) => {
+      const x = (i / (points.length - 1)) * w;
+      const y = h - ((p - min) / span) * (h - 6) - 3;
+      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+  const up = points[points.length - 1]! >= points[0]!;
+  return (
+    <svg className="wspark" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true">
+      <path d={d} fill="none" stroke={up ? 'var(--yes)' : 'var(--no)'} strokeWidth="1.5" />
+    </svg>
+  );
+}
+
 function RecordScreen({ record }: { record: LocalRecord }) {
   const { summary: cal, bins, categories, verdict, readiness } = record;
 
@@ -694,12 +783,6 @@ function SettingsView({ state, onChange }: { state: LocalState; onChange: () => 
           desc="Show the trading panel on polymarket.com and kalshi.com."
           checked={state.settings.overlayEnabled}
           onChange={(v) => void set({ overlayEnabled: v })}
-        />
-        <Toggle
-          label="Colourblind-safe colours"
-          desc="Blue and orange instead of green and red. YES/NO always carry an arrow and a label regardless."
-          checked={state.settings.colorblindMode}
-          onChange={(v) => void set({ colorblindMode: v })}
         />
       </div>
 

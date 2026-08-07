@@ -1,25 +1,22 @@
 /* Design tokens. Violet brand chrome deliberately never green/red, so nothing
    in the UI furniture can be mistaken for a P&L signal. */
 :root {
-  --bg: #0b0d10;
-  --surface: #14171c;
-  --surface-2: #191d24;
-  --border: #232830;
-  --text: #e8eaed;
-  --muted: #7a8290;
-  --dim: #4a5260;
-  --yes: #00d18f;
-  --no: #ff4d6a;
-  --brand: #8b5cf6;
+  --bg: #0d1017;
+  --surface: #151a23;
+  --surface-2: #1b2230;
+  --border: #222b38;
+  --text: #e6eaf2;
+  --muted: #78849a;
+  --dim: #4d586b;
+  --yes: #22c55e;
+  --no: #ef4444;
+  --brand: #3b82f6;
+  --brand-2: #60a5fa;
   --warn: #ffb020;
   --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 /* Colourblind-safe alternative: blue/orange instead of green/red. YES and NO
    are never encoded by colour alone — they always carry ▲/▼ and a label. */
-:root[data-cb='1'] {
-  --yes: #4d9fff;
-  --no: #ff9020;
-}
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -256,3 +253,73 @@ button.action:disabled { opacity: .55; cursor: not-allowed; }
 @media (min-width: 1000px) {
   .spark { height: 168px; }
 }
+
+
+/* ── Full-screen dashboard ──────────────────────────────────────────────────
+   Built for a 320px rail originally. As a tab it should use the whole window:
+   fluid width, two columns once there is room, and cards that match the market
+   popup so the two surfaces read as one product. */
+html, body, #root { height: 100%; }
+body { overflow-y: scroll; }               /* reserve the gutter: no width jump */
+
+@media (min-width: 760px) {
+  .app { width: 100%; max-width: none; }
+  header { padding: 24px 40px 0; }
+  nav { padding: 16px 36px 0; gap: 4px; }
+  nav button { font-size: 13px; padding: 10px 16px; }
+  main { padding: 24px 40px 64px; }
+  .simbar { padding: 10px 40px; }
+  .equity { font-size: 44px; letter-spacing: -0.03em; }
+  .delta { font-size: 14px; }
+  .grid2 { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+  .spark { height: 150px; }
+  .podium { max-width: 660px; }
+}
+@media (min-width: 1180px) {
+  /* Cards left, live positions right — nothing becomes a long scroll. */
+  .split { display: grid; grid-template-columns: minmax(0,1.3fr) minmax(0,1fr);
+    gap: 20px; align-items: start; }
+  .spark { height: 190px; }
+}
+
+/* Cards, restyled to match the popup. */
+.card { background: linear-gradient(160deg, rgba(21,26,35,.9), rgba(13,16,23,.9));
+  border-radius: 14px; border-left-color: var(--brand); }
+.stat { border-radius: 12px; }
+button.action { border-radius: 10px; }
+.segmented button[aria-selected='true'] { background: var(--brand); }
+
+/* ── Watchlist rows ─────────────────────────────────────────────────────── */
+.wrow { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  margin-bottom: 8px; overflow: hidden; transition: border-color .15s; }
+.wrow:hover { border-color: var(--brand); }
+.whead { display: grid; grid-template-columns: 1fr auto auto auto; gap: 10px;
+  align-items: center; padding: 11px 12px; cursor: pointer; }
+.whead .q { font-size: 12.5px; font-weight: 600; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.whead .px { font-size: 17px; font-weight: 700; }
+.whead .chg { font-size: 11px; font-weight: 600; }
+.wcar { color: var(--muted); font-size: 10px; transition: transform .2s; }
+.wrow.open .wcar { transform: rotate(180deg); }
+/* Height animation instead of display:none so opening a row glides. */
+.wbody { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .24s ease; }
+.wrow.open .wbody { grid-template-rows: 1fr; }
+.wbody > div { overflow: hidden; }
+.winner { padding: 0 12px 12px; display: grid; gap: 10px;
+  border-top: 1px solid var(--border); padding-top: 11px; }
+.wgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px,1fr)); gap: 8px; }
+.wstat { background: var(--bg); border-radius: 9px; padding: 7px 9px; }
+.wstat .k { font-size: 9px; color: var(--muted); text-transform: uppercase;
+  letter-spacing: .05em; }
+.wstat .v { font-size: 14px; font-weight: 700; margin-top: 1px; }
+.wactions { display: flex; gap: 7px; }
+.wactions a, .wactions button { flex: 1; text-align: center; text-decoration: none;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+  border-radius: 9px; padding: 7px 0; font: inherit; font-size: 11.5px; cursor: pointer; }
+.wactions a:hover, .wactions button:hover { border-color: var(--brand); }
+.wspark { width: 100%; height: 40px; display: block; }
+.live { display: inline-flex; align-items: center; gap: 5px; font-size: 9.5px;
+  color: var(--muted); letter-spacing: .05em; }
+.live i { width: 5px; height: 5px; border-radius: 50%; background: var(--yes);
+  animation: lp 2s infinite; font-style: normal; }
+@keyframes lp { 0%,100% { opacity: 1; } 50% { opacity: .3; } }

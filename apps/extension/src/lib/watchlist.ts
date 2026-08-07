@@ -42,6 +42,7 @@ export async function toggleWatch(meta: MarketMeta, mid: number | null): Promise
       category: meta.category,
       addedAt: new Date().toISOString(),
       lastMid: mid,
+      ...(meta.slug ? { slug: meta.slug } : {}),
       lastSeenAt: new Date().toISOString(),
       closeTime: meta.closeTime,
     };
@@ -51,10 +52,20 @@ export async function toggleWatch(meta: MarketMeta, mid: number | null): Promise
 }
 
 /** Record a fresh mid for a watched market after a book refresh. */
+/** How many mids a watch row keeps for its sparkline. ~1 minute at 1s. */
+export const HISTORY_POINTS = 60;
+
 export async function noteMid(key: string, mid: number | null): Promise<void> {
   await mutate((state) => {
     const w = state.watchlist.find((x) => x.marketKey === key);
     if (!w) return;
+    // Keep the previous mid so a row can colour its own direction, and a short
+    // trail for its sparkline. Bounded, because this is persisted storage and
+    // an unbounded array here would grow forever at one point per second.
+    if (mid != null && mid !== w.lastMid) {
+      w.prevMid = w.lastMid;
+      w.history = [...(w.history ?? []), mid].slice(-HISTORY_POINTS);
+    }
     w.lastMid = mid;
     w.lastSeenAt = new Date().toISOString();
   });

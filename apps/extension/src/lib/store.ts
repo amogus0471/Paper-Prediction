@@ -98,6 +98,12 @@ export interface WatchedMarket {
   addedAt: string;
   /** Last book mid we saw, so the list renders instantly before a refresh. */
   lastMid: number | null;
+  /** The mid before that, so a row can colour its own direction of travel. */
+  prevMid?: number | null;
+  /** Recent mids for the row's sparkline. Bounded — this lives in storage. */
+  history?: number[];
+  /** Venue slug, for deep-linking back to the market page. */
+  slug?: string;
   lastSeenAt?: string;
   closeTime?: string;
 }
@@ -108,13 +114,14 @@ export interface Settings {
   soundVolume: number;
   confirmBeforeOrder: boolean;
   defaultOrderSize: number;
-  colorblindMode: boolean;
   overlayEnabled: boolean;
   overlayPosition: { x: number; y: number } | null;
   sizeMode: 'dollars' | 'contracts';
   /** The four one-tap amounts on the popup. Fully user-editable. */
   quickAmounts: number[];
   confettiEnabled: boolean;
+  /** Popup width in px. Dragging the corner grip persists it. */
+  overlayWidth: number;
   competeOptIn: boolean;
   deviceKey: string | null;
   handle: string | null;
@@ -149,12 +156,12 @@ export const DEFAULT_SETTINGS: Settings = {
   soundVolume: 0.35,
   confirmBeforeOrder: false,
   defaultOrderSize: 100,
-  colorblindMode: false,
   overlayEnabled: true,
   overlayPosition: null,
   sizeMode: 'dollars',
   quickAmounts: [25, 50, 100, 250],
   confettiEnabled: true,
+  overlayWidth: 300,
   competeOptIn: false,
   deviceKey: null,
   handle: null,

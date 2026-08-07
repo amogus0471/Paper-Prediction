@@ -70,6 +70,7 @@ function toMeta(m: NormalizedMarket, category: string): MarketMeta {
     tickCents: m.tickCents,
     minOrderSize: m.minOrderSize,
     closeTime: m.closeTime?.toISOString(),
+    ...(m.slug ? { slug: m.slug } : {}),
     category,
   };
 }

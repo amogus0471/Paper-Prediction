@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Polyfill \u2014 Paper Trade Prediction Markets",
+  "name": "Paper Predictions \u2014 Practise Prediction Markets",
   "version": "0.2.0",
   "description": "Practise trading real Polymarket and Kalshi markets with simulated money. Fills price against the real order book. No real money, ever.",
   "minimum_chrome_version": "116",
@@ -19,7 +19,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "Polyfill \u2014 open dashboard",
+    "default_title": "Paper Predictions \u2014 open dashboard",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",

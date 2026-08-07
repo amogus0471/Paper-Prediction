@@ -9,13 +9,13 @@
  * Web Store bans extensions that facilitate real-money prediction market
  * trading and carves out an exception only for simulators that clearly indicate
  * no real money is involved. Putting "bet" in the product name argues against
- * that exception in the first place a reviewer looks. "Polyfill" is a pun on
- * the web-platform term — code that fills in what is missing, and here, code
- * that fills orders — and contains no gambling word at all.
+ * that exception in the first place a reviewer looks. "Paper Predictions" says
+ * exactly what the product is — paper trading, on prediction markets — and
+ * contains no gambling word at all.
  */
 
 export const BRAND = {
-  name: 'Polyfill',
+  name: 'Paper Predictions',
   tagline: 'Paper-trade real prediction markets',
   /** Shown wherever a number could otherwise be mistaken for real money. */
   currencySymbol: 'P$',

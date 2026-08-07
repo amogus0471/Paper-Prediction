@@ -12,7 +12,7 @@
 
 import { buildQuote, submitOrder, markPositions, settleLocal, OrderError } from '../lib/engine';
 import { fetchBook, resolveUrl, searchMarkets, trending } from '../lib/resolve';
-import { loadState, mutate, freshState, saveState, marketKey } from '../lib/store';
+import { loadState, mutate, freshState, saveState, marketKey, summarize } from '../lib/store';
 import { buildRecord } from '../lib/record';
 import { dueForRefresh, isWatched, metaOf, noteMid, toggleWatch } from '../lib/watchlist';
 import type { Request, Response } from '../lib/messages';
@@ -41,13 +41,27 @@ const DASHBOARD = 'src/sidepanel/index.html';
  */
 chrome.action.onClicked.addListener(async () => {
   const url = chrome.runtime.getURL(DASHBOARD);
-  const [existing] = await chrome.tabs.query({ url });
-  if (existing?.id != null) {
-    await chrome.tabs.update(existing.id, { active: true });
-    if (existing.windowId != null) await chrome.windows.update(existing.windowId, { focused: true });
-    return;
+
+  // Remember the tab we opened and try to reuse it.
+  //
+  // The obvious `chrome.tabs.query({ url })` needs the "tabs" permission to
+  // match on URL — without it the filter silently yields [] and every click
+  // opened yet another dashboard. Rather than widen permissions (and the Web
+  // Store review surface) just to de-duplicate a tab, keep the id and let
+  // tabs.update fail if the tab is gone.
+  const { dashboardTabId } = await chrome.storage.local.get('dashboardTabId');
+  if (typeof dashboardTabId === 'number') {
+    try {
+      const tab = await chrome.tabs.update(dashboardTabId, { active: true });
+      if (tab?.windowId != null) await chrome.windows.update(tab.windowId, { focused: true });
+      return;
+    } catch {
+      // Tab was closed since; fall through and open a fresh one.
+    }
   }
-  await chrome.tabs.create({ url });
+
+  const created = await chrome.tabs.create({ url });
+  if (created.id != null) await chrome.storage.local.set({ dashboardTabId: created.id });
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -157,6 +171,9 @@ async function handle(req: Request): Promise<unknown> {
 
     case 'TOGGLE_WATCH':
       return { watched: await toggleWatch(req.meta, req.mid) };
+
+    case 'GET_SUMMARY':
+      return summarize(await loadState());
 
     case 'WATCH_HAS':
       return isWatched(await loadState(), req.meta.venue, req.meta.venueMarketId);

@@ -25,6 +25,7 @@ export type Request =
   | { type: 'SUBMIT'; meta: MarketMeta; quote: QuoteResult }
   | { type: 'SETTLE_CHECK' }
   | { type: 'WATCH_HAS'; meta: MarketMeta }
+  | { type: 'GET_SUMMARY' }
   | { type: 'TOGGLE_WATCH'; meta: MarketMeta; mid: number | null }
   | { type: 'REFRESH_WATCHLIST' }
   | { type: 'GET_RECORD' };
