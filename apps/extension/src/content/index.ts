@@ -64,6 +64,10 @@ let structureKey = '';
 let overlayWidth = 300;
 /** Last five resolved outcomes, newest first, for the pill's streak dots. */
 let streak: boolean[] = [];
+/** When the last drag ended, so the trailing click can be swallowed. */
+let lastDragEnd = 0;
+let lastSideKey: 'yes' | 'no' | null = null;
+let lastSideKeyAt = 0;
 
 /** Stable references into the built DOM, so paint() never queries. */
 interface Nodes {
@@ -167,15 +171,30 @@ ${ODOMETER_CSS}
 .body { padding: 12px 13px 13px; display: grid; gap: 10px; }
 /* Past ~380px the panel becomes two columns: trade controls left, live
    numbers right. Stretching a single column just makes long thin rows. */
-.card.wide .body { grid-template-columns: 1fr 1fr; align-items: start;
-  column-gap: 12px; }
-.card.wide .q, .card.wide .dd, .card.wide .go { grid-column: 1 / -1; }
-.card.wide .sides { grid-column: 1; }
-.card.wide .amt { grid-column: 1; }
-.card.wide .chips { grid-column: 1; }
-.card.wide .tick { grid-column: 2; grid-row: 3 / span 3; align-self: stretch; }
-.card.wide .extra { grid-column: 2; }
-.card.wide .head .nm { font-size: 12px; }
+.card.wide .body {
+  /* Named areas, never row numbers. The sibling picker is conditional, so a
+     hard-coded grid-row pushed a control off the grid whenever the picker was
+     absent — that is why buttons went missing at wide widths. */
+  grid-template-columns: 1fr 1fr;
+  grid-template-areas:
+    "q     q"
+    "dd    dd"
+    "sides tick"
+    "amt   tick"
+    "chips extra"
+    "go    go";
+  align-items: start; column-gap: 12px;
+}
+.card.wide.nodd .body { grid-template-areas:
+    "q q" "sides tick" "amt tick" "chips extra" "go go"; }
+.card.wide .q     { grid-area: q; -webkit-line-clamp: 3; }
+.card.wide .dd    { grid-area: dd; }
+.card.wide .sides { grid-area: sides; }
+.card.wide .amt   { grid-area: amt; }
+.card.wide .chips { grid-area: chips; }
+.card.wide .tick  { grid-area: tick; align-self: stretch; }
+.card.wide .extra { grid-area: extra; }
+.card.wide .go    { grid-area: go; }
 
 .q { font-size: 12.5px; font-weight: 600; line-height: 1.35; color: #C9D2E0; cursor: pointer;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -203,11 +222,19 @@ ${ODOMETER_CSS}
 .dd-item:last-child { border-bottom: 0; }
 .dd-item:hover { background: rgba(59,130,246,.1); }
 .dd-item[aria-selected="true"] { background: rgba(59,130,246,.16); }
-.dd-item .av { width: 26px; height: 26px; border-radius: 7px; flex: 0 0 auto;
+.dd-item .av { width: 30px; height: 30px; border-radius: 8px; flex: 0 0 auto;
   background: var(--card); object-fit: cover; display: flex; align-items: center;
-  justify-content: center; font-size: 10px; font-weight: 800; color: var(--blue2); }
-.dd-item .t { flex: 1; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; }
+  justify-content: center; font-size: 10px; font-weight: 800; color: var(--blue2);
+  align-self: flex-start; }
+.dd-item { align-items: flex-start; }
+.dd-item .pc { align-self: center; }
+.dd-item .t { flex: 1; font-size: 12px; font-weight: 600; color: #fff;
+  line-height: 1.32; white-space: normal; overflow-wrap: anywhere; }
+.dd-search { width: calc(100% - 16px); margin: 8px; background: var(--card);
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px;
+  color: #E6EAF2; font: inherit; font-size: 11.5px; outline: none; }
+.dd-search:focus { border-color: var(--blue); }
+.dd-list { max-height: 320px; }
 .dd-item .pc { font-size: 13px; font-weight: 700; }
 .dd-list::-webkit-scrollbar { width: 7px; }
 .dd-list::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
@@ -243,7 +270,9 @@ ${ODOMETER_CSS}
   min-height: 34px; }
 .r { display: flex; justify-content: space-between; font-size: 11px; }
 .r > span:first-child { color: var(--mute); }
-.r.big > span:last-child { color: var(--up); font-weight: 700; }
+.r.big { align-items: baseline; }
+.r.big > span:last-child { color: var(--up); font-weight: 800; font-size: 17px; }
+.r.lead > span:last-child { font-weight: 800; font-size: 16px; color: #fff; }
 .warn { color: #F59E0B; }
 .muted { color: var(--mute); font-size: 11px; }
 
@@ -294,7 +323,23 @@ canvas.confetti { position: fixed; inset: 0; pointer-events: none; z-index: 2147
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 `;
 
-const cents = (v: number | null) => (v == null ? '--' : `${v.toFixed(0)}¢`);
+/**
+ * Format a price for display.
+ *
+ * Two rules that matter:
+ *   - the decimal appears only when the market actually quotes at that
+ *     precision (Polymarket's 0.1c-tick markets do, whole-cent ones do not),
+ *     so we never show a digit the venue does not publish;
+ *   - never render a bare 100¢ or 0¢. An unresolved market is not a certainty,
+ *     and showing one reads as a bug. The DISPLAY clamps to 99.9/0.1 while the
+ *     underlying number stays exact for the fill engine.
+ */
+function cents(v: number | null, tick = 1): string {
+  if (v == null) return '--';
+  const shown = Math.min(99.9, Math.max(0.1, v));
+  const dp = tick < 1 || !Number.isInteger(shown) ? 1 : 0;
+  return `${shown.toFixed(dp)}¢`;
+}
 const money = (v: number) => `${v < 0 ? '-' : '+'}P$${Math.abs(v).toFixed(2)}`;
 
 // ── toasts ──────────────────────────────────────────────────────────────────
@@ -431,8 +476,11 @@ function buildPill(): void {
   pn = { root, px, pnl: pnlOdo, label, streak: streakEl };
 
   root.addEventListener('mousedown', (e) => drag(e as MouseEvent, root));
-  root.addEventListener('click', (e) => {
-    if ((e as MouseEvent & { __dragged?: boolean }).__dragged) return;
+  root.addEventListener('click', () => {
+    // Ignored briefly after a drag: releasing the mouse at the end of a drag
+    // fires a click, which used to pop the panel open every time you moved the
+    // pill even a pixel.
+    if (Date.now() - lastDragEnd < 250) return;
     collapsed = false;
     structureKey = '';
     rebuild();
@@ -447,6 +495,7 @@ function buildPanel(): void {
   const card = el('div', 'card');
   card.style.setProperty('--w', `${overlayWidth}px`);
   if (overlayWidth > 380) card.classList.add('wide');
+  if (market.siblings.length <= 1) card.classList.add('nodd');
 
   // header
   const head = el('div', 'head');
@@ -478,15 +527,48 @@ function buildPanel(): void {
     btn.append(pickerLabel, el('span', 'car', '▼'));
     const list = el('div', 'dd-list');
 
+    // Search box — a 40-market event is unusable without one.
+    const search = el('input', 'dd-search');
+    search.type = 'text';
+    search.placeholder = 'Search outcomes…';
+    search.addEventListener('click', (e) => e.stopPropagation());
+    search.addEventListener('input', () => {
+      const q = search.value.toLowerCase().trim();
+      for (const row of Array.from(list.querySelectorAll('.dd-item')) as HTMLElement[]) {
+        row.style.display = !q || (row.dataset.q ?? '').includes(q) ? '' : 'none';
+      }
+    });
+    list.appendChild(search);
+
     for (const s of market.siblings) {
       const item = el('div', 'dd-item');
       item.setAttribute('role', 'option');
-      const av = el('div', 'av');
-      // Venue images are cross-origin; a lettered tile never 404s or leaks a
-      // referrer, and stays legible at 26px where a photo would not.
-      av.textContent = (s.meta.yesLabel || s.meta.question).slice(0, 2).toUpperCase();
+      item.dataset.q = s.meta.question.toLowerCase();
+
+      // Use the venue's own artwork when it supplies some; fall back to a
+      // lettered tile rather than a broken image. `referrerpolicy` keeps the
+      // host page out of the venue's logs.
+      let av: HTMLElement;
+      if (s.meta.imageUrl) {
+        const img = document.createElement('img');
+        img.className = 'av';
+        img.src = s.meta.imageUrl;
+        img.referrerPolicy = 'no-referrer';
+        img.loading = 'lazy';
+        img.alt = '';
+        img.addEventListener('error', () => {
+          const tile = el('div', 'av', (s.meta.yesLabel || s.meta.question).slice(0, 2).toUpperCase());
+          img.replaceWith(tile);
+        });
+        av = img;
+      } else {
+        av = el('div', 'av', (s.meta.yesLabel || s.meta.question).slice(0, 2).toUpperCase());
+      }
+
+      // Full text, wrapped — truncating the one thing that identifies an
+      // outcome makes the picker useless on long questions.
       const t = el('div', 't', s.meta.question);
-      const pc = el('div', 'pc num', s.mid == null ? '--' : `${s.mid.toFixed(0)}%`);
+      const pc = el('div', 'pc num', s.mid == null ? '--' : cents(s.mid, s.meta.tickCents));
       if (s.mid != null) pc.classList.add(s.mid >= 50 ? 'up' : 'down');
       item.append(av, t, pc);
       item.addEventListener('click', () => {
@@ -578,6 +660,13 @@ function buildPanel(): void {
   noBtn.addEventListener('click', () => pickSide('no'));
   amtInput.addEventListener('input', () => {
     amount = Number(amtInput.value) || 0;
+    // Scale the existing quote immediately so Cost / If it wins track the
+    // keystroke, then let the debounced real quote correct it. Waiting 200ms
+    // to move a number you are actively typing feels broken.
+    if (quote && quote.cost > 0 && amount > 0) {
+      const k = amount / quote.cost;
+      paintProvisional(quote.qty * k, amount, quote.maxPayout * k);
+    }
     requestQuote();
   });
   go.addEventListener('click', () => void place());
@@ -646,7 +735,7 @@ function paint(): void {
   if (collapsed) {
     if (!pn) return;
     const px = outcome === 'yes' ? live.yes : live.no;
-    pn.px.set(cents(px));
+    pn.px.set(cents(px, meta?.tickCents ?? 1));
     pn.label.textContent = outcome === 'yes' ? 'YES' : 'NO';
     if (pnl) {
       pn.pnl.set(money(pnl.delta));
@@ -669,8 +758,8 @@ function paint(): void {
   if (n.question.textContent !== meta.question) n.question.textContent = meta.question;
   if (n.pickerLabel) n.pickerLabel.textContent = meta.question;
 
-  n.yesPx.set(cents(live.yes));
-  n.noPx.set(cents(live.no));
+  n.yesPx.set(cents(live.yes, meta.tickCents));
+  n.noPx.set(cents(live.no, meta.tickCents));
   n.yesBtn.dataset.on = outcome === 'yes' ? '1' : '0';
   n.noBtn.dataset.on = outcome === 'no' ? '1' : '0';
   n.star.textContent = watched ? '★' : '☆';
@@ -682,7 +771,7 @@ function paint(): void {
     ? [
         ['Avg fill', `${quote.avgPrice.toFixed(1)}¢`],
         ['You get', `${quote.qty.toLocaleString()} ${quote.unitNoun}`],
-        ['Cost', `P$${quote.totalCost.toFixed(2)}`],
+        ['Cost', `P$${quote.totalCost.toFixed(2)}`, 'lead'],
         ['If it wins', `+P$${quote.maxProfit.toFixed(2)}`, 'big'],
         ...(quote.partial ? ([['Partial fill', 'book ran out', 'warn']] as [string, string, string][]) : []),
       ]
@@ -701,6 +790,23 @@ function paint(): void {
   if (n.go.textContent !== label) n.go.textContent = label;
 }
 
+/**
+ * Optimistic ticket while the user is still typing.
+ *
+ * Linear scaling of the last real quote — accurate enough for the tenth of a
+ * second before the true walk returns, and explicitly overwritten by it. Never
+ * used to price a fill.
+ */
+function paintProvisional(qty: number, cost: number, payout: number): void {
+  if (!n) return;
+  syncRows(n.ticket, [
+    ['Avg fill', quote ? `${quote.avgPrice.toFixed(1)}¢` : '--'],
+    ['You get', `${Math.round(qty).toLocaleString()} ${quote?.unitNoun ?? ''}`],
+    ['Cost', `P$${cost.toFixed(2)}`, 'lead'],
+    ['If it wins', `+P$${(payout - cost).toFixed(2)}`, 'big'],
+  ]);
+}
+
 /** Reconcile a list of label/value rows without discarding existing nodes. */
 function syncRows(host: HTMLElement, rows: [string, string, string?][]): void {
   while (host.children.length > rows.length) host.lastElementChild!.remove();
@@ -711,7 +817,7 @@ function syncRows(host: HTMLElement, rows: [string, string, string?][]): void {
       row.append(el('span'), el('span', 'num'));
       host.appendChild(row);
     }
-    row.className = `r ${cls === 'big' ? 'big' : ''}`;
+    row.className = `r ${cls === 'big' ? 'big' : cls === 'lead' ? 'lead' : ''}`;
     const [a, b] = row.children as unknown as [HTMLSpanElement, HTMLSpanElement];
     if (a.textContent !== k) a.textContent = k;
     if (b.textContent !== v) b.textContent = v;
@@ -737,11 +843,12 @@ function drag(e: MouseEvent, node: HTMLElement): void {
     wrap.style.top = `${Math.max(0, Math.min(innerHeight - 44, ev.clientY - dy))}px`;
     wrap.style.bottom = 'auto';
   };
-  const up = (ev: MouseEvent) => {
+  const up = () => {
     removeEventListener('mousemove', move);
     removeEventListener('mouseup', up);
-    (ev as MouseEvent & { __dragged?: boolean }).__dragged = moved;
+    if (moved) lastDragEnd = Date.now();
     if (moved && wrap) {
+      dockToEdge();
       const b = wrap.getBoundingClientRect();
       void send({ type: 'SET_SETTINGS', patch: { overlayPosition: { x: b.left, y: b.top } } }).catch(
         () => undefined,
@@ -752,6 +859,33 @@ function drag(e: MouseEvent, node: HTMLElement): void {
   addEventListener('mouseup', up);
   e.preventDefault();
   void node;
+}
+
+/**
+ * Snap to whichever edge the panel was released nearest.
+ *
+ * Docking keeps it out of the way of the page's own content instead of
+ * floating over the middle of it. Only snaps within 40px, so a deliberate
+ * mid-screen placement is respected.
+ */
+function dockToEdge(): void {
+  if (!wrap) return;
+  const r = wrap.getBoundingClientRect();
+  const SNAP = 40;
+  const M = 16;
+  let { left, top } = r;
+
+  if (r.left < SNAP) left = M;
+  else if (innerWidth - r.right < SNAP) left = innerWidth - r.width - M;
+  if (r.top < SNAP) top = M;
+  else if (innerHeight - r.bottom < SNAP) top = innerHeight - r.height - M;
+
+  if (left !== r.left || top !== r.top) {
+    wrap.style.transition = 'left .18s cubic-bezier(.2,.8,.2,1), top .18s cubic-bezier(.2,.8,.2,1)';
+    wrap.style.left = `${Math.max(0, left)}px`;
+    wrap.style.top = `${Math.max(0, top)}px`;
+    setTimeout(() => wrap && (wrap.style.transition = ''), 220);
+  }
 }
 
 function resize(e: MouseEvent, card: HTMLElement): void {
@@ -991,9 +1125,15 @@ async function sync(): Promise<void> {
 /**
  * Keyboard trading.
  *
- * Y/N pick a side, 1-4 pick a preset, Enter places. Deliberately inert while
- * the host page has focus in a text field — hijacking a keystroke someone
- * meant for the venue's own search box would be hostile.
+ * Y/N pick a side, Enter places, Esc minimises.
+ *
+ * Number keys deliberately do NOT change your size any more: a stray digit
+ * silently resizing a live order is the kind of shortcut that loses money.
+ * With double-tap enabled, pressing the same side twice within 400ms places —
+ * fast, without being reachable by accident.
+ *
+ * All of it stays inert while the host page has focus in a text field, because
+ * hijacking a keystroke meant for the venue's own search box would be hostile.
  */
 function bindKeys(): void {
   addEventListener(
@@ -1009,18 +1149,18 @@ function bindKeys(): void {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
       const k = e.key.toLowerCase();
-      if (k === 'y' && !ours) { e.preventDefault(); pickSide('yes'); }
-      else if (k === 'n' && !ours) { e.preventDefault(); pickSide('no'); }
-      else if (/^[1-4]$/.test(k) && !ours) {
-        const v = (settings.quickAmounts ?? [])[Number(k) - 1];
-        if (v != null) {
-          e.preventDefault();
-          amount = v;
-          if (n) n.amtInput.value = String(v);
-          playSound('tick', settings.soundVolume, settings.soundEnabled);
-          requestQuote();
-        }
-      } else if (e.key === 'Enter' && quote && !busy) {
+      if ((k === 'y' || k === 'n') && !ours) {
+        e.preventDefault();
+        const picked = k === 'y' ? 'yes' : 'no';
+        const now = Date.now();
+        const doubleTap =
+          settings.doubleTapToPlace && lastSideKey === picked && now - lastSideKeyAt < 400;
+        lastSideKey = picked;
+        lastSideKeyAt = now;
+        if (doubleTap && quote && !busy) void place();
+        else pickSide(picked);
+      }
+      else if (e.key === 'Enter' && quote && !busy) {
         e.preventDefault();
         void place();
       } else if (e.key === 'Escape') {

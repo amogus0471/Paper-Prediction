@@ -124,6 +124,8 @@ export interface Settings {
   overlayWidth: number;
   /** Y/N to pick a side, 1-4 for presets, Enter to place. */
   keyboardTrading: boolean;
+  /** Press Y or N twice quickly to place, instead of Enter. */
+  doubleTapToPlace: boolean;
   /**
    * Reuse an already-open Polymarket/Kalshi tab instead of spending a cold
    * page load on a new one. Off by default because it navigates a tab you did
@@ -174,6 +176,7 @@ export const DEFAULT_SETTINGS: Settings = {
   confettiEnabled: true,
   overlayWidth: 300,
   keyboardTrading: true,
+  doubleTapToPlace: false,
   turboMode: false,
   quickMode: 'dollars',
   quickPercents: [1, 2, 5, 10],

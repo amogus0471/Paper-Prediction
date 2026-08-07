@@ -31,6 +31,8 @@ export interface NormalizedMarket {
   /** The label the venue gives the YES side. Sports markets say "Lakers", not "Yes". */
   yesLabel: string;
   noLabel: string;
+  /** Per-market artwork when the venue provides it. Kalshi does not. */
+  imageUrl?: string;
   resolutionSource?: string;
   resolutionRules?: string;
   status: MarketStatus;

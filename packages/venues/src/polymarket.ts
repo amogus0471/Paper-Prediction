@@ -177,6 +177,7 @@ export class PolymarketAdapter implements VenueAdapter {
       venueMarketId: m.conditionId,
       question: m.question ?? m.groupItemTitle ?? 'Untitled market',
       ...(m.slug ? { slug: m.slug } : {}),
+      ...(m.image || m.icon ? { imageUrl: (m.image ?? m.icon)! } : {}),
       yesLabel: outcomes[0] ?? 'Yes',
       noLabel: outcomes[1] ?? 'No',
       ...(m.resolutionSource ? { resolutionSource: m.resolutionSource } : {}),
@@ -322,6 +323,8 @@ interface RawMarket {
   question?: string;
   groupItemTitle?: string;
   slug?: string;
+  image?: string;
+  icon?: string;
   description?: string;
   resolutionSource?: string;
   outcomes?: string;

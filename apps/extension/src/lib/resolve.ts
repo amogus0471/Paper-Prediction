@@ -25,7 +25,10 @@ export interface ResolvedMarket {
 
 export function parseVenueUrl(
   url: string,
-): { venue: 'polymarket'; slug: string } | { venue: 'kalshi'; series: string; ticker?: string } | null {
+):
+  | { venue: 'polymarket'; slug: string }
+  | { venue: 'kalshi'; series: string; ticker?: string; slug?: string }
+  | null {
   let u: URL;
   try {
     u = new URL(url);
@@ -51,13 +54,65 @@ export function parseVenueUrl(
     // SERIES-SUFFIX in caps, so only accept a segment that matches that.
     if (parts[0] === 'markets' && parts[1]) {
       const series = parts[1].toUpperCase();
-      const candidate = [parts[3], parts[2]].find((p) => p && /^[A-Za-z0-9]+-[A-Za-z0-9]+/.test(p) && p === p.toUpperCase());
-      return { venue: 'kalshi', series, ...(candidate ? { ticker: candidate } : {}) };
+      const candidate = [parts[3], parts[2]].find(
+        (p) => p && /^[A-Za-z0-9]+-[A-Za-z0-9]+/.test(p) && p === p.toUpperCase(),
+      );
+      // The lower-case segment is a human slug of the event title; keep it so
+      // the series fallback can identify WHICH event the page is showing.
+      const slug = [parts[2], parts[3]].find((p) => p && p !== candidate && /[a-z]/.test(p));
+      return {
+        venue: 'kalshi',
+        series,
+        ...(candidate ? { ticker: candidate } : {}),
+        ...(slug ? { slug } : {}),
+      };
     }
     return null;
   }
 
   return null;
+}
+
+/** Words that carry no identifying signal in a market title. */
+const STOP = new Set(['vs', 'v', 'the', 'a', 'an', 'and', 'or', 'to', 'in', 'at', 'of', 'will']);
+
+function tokens(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .split(' ')
+      .filter((w) => w.length > 1 && !STOP.has(w)),
+  );
+}
+
+/**
+ * Pick the event a URL slug refers to, or nothing.
+ *
+ * Scores token overlap between the slug and each event's title. Requires a
+ * clear winner: if the best candidate shares fewer than half the slug's words,
+ * we would be guessing, and a confidently-wrong market is the worst outcome
+ * available here.
+ */
+function bestSlugMatch<T extends { title?: string; sub_title?: string; event_ticker?: string }>(
+  events: T[],
+  slug: string,
+): T | null {
+  const want = tokens(slug);
+  if (want.size === 0) return null;
+
+  let best: T | null = null;
+  let bestScore = 0;
+  for (const e of events) {
+    const have = tokens(`${e.title ?? ''} ${e.sub_title ?? ''} ${e.event_ticker ?? ''}`);
+    let hits = 0;
+    for (const w of want) if (have.has(w)) hits++;
+    if (hits > bestScore) {
+      bestScore = hits;
+      best = e;
+    }
+  }
+  return bestScore / want.size >= 0.5 ? best : null;
 }
 
 function toMeta(m: NormalizedMarket, category: string): MarketMeta {
@@ -71,6 +126,7 @@ function toMeta(m: NormalizedMarket, category: string): MarketMeta {
     minOrderSize: m.minOrderSize,
     closeTime: m.closeTime?.toISOString(),
     ...(m.slug ? { slug: m.slug } : {}),
+    ...(m.imageUrl ? { imageUrl: m.imageUrl } : {}),
     category,
   };
 }
@@ -121,13 +177,21 @@ export async function resolveUrl(url: string): Promise<ResolvedMarket | null> {
 
   if (!event) {
     const res = await fetch(
-      `${K}/events?series_ticker=${encodeURIComponent(parsed.series)}&status=open&with_nested_markets=true&limit=10`,
+      `${K}/events?series_ticker=${encodeURIComponent(parsed.series)}&status=open&with_nested_markets=true&limit=200`,
     );
     if (!res.ok) return null;
-    const { events } = (await res.json()) as { events?: { markets?: unknown[] }[] };
-    // Soonest event with tradeable markets. A series page lists many; the one
-    // a user means is the one currently open.
-    event = (events ?? []).find((e) => (e.markets?.length ?? 0) > 0) ?? null;
+    const { events } = (await res.json()) as {
+      events?: { markets?: unknown[]; title?: string; sub_title?: string; event_ticker?: string }[];
+    };
+
+    // Match the URL slug against the event, rather than taking the first one.
+    //
+    // Taking events[0] is how the popup ended up showing "Larraya Guidi vs
+    // Schaedel" while the page was "Estevez vs Labrana": one tennis series
+    // holds every match of the tournament. Trading the wrong market is far
+    // worse than trading none, so an ambiguous match resolves to nothing.
+    const candidates = (events ?? []).filter((e) => (e.markets?.length ?? 0) > 0);
+    event = parsed.slug ? bestSlugMatch(candidates, parsed.slug) : (candidates[0] ?? null);
   }
 
   if (!event) return null;

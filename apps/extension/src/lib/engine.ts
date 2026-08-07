@@ -86,6 +86,8 @@ export interface MarketMeta {
   minOrderSize: number;
   closeTime?: string;
   category?: string;
+  /** Venue artwork, when the venue supplies any. Optional by design. */
+  imageUrl?: string;
   /** Venue slug, kept for deep-linking back to the market page. */
   slug?: string;
 }
