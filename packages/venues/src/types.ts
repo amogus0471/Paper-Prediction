@@ -71,7 +71,9 @@ export interface NormalizedMarket {
 export type BookRef =
   | { venue: 'polymarket'; yesTokenId: string; noTokenId: string }
   | { venue: 'kalshi'; ticker: string }
-  | { venue: 'hyperliquid'; yesCoin: string; noCoin: string };
+  | { venue: 'hyperliquid'; yesCoin: string; noCoin: string }
+  // The slug addresses the book directly; decimals scale the raw sizes.
+  | { venue: 'limitless'; slug: string; decimals: number };
 
 export interface Candle {
   ts: Date;

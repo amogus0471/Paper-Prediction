@@ -1,0 +1,75 @@
+name: Release
+
+# Publishes a zip anyone can download and load into Chrome without installing
+# node, cloning the repo, or running a build.
+#
+# The alternative — committing dist/ — was rejected deliberately: build output
+# in git goes stale the moment someone edits src and forgets, and then the
+# thing people download is not the thing the code says it is. Built from a tag
+# by CI, the artifact is always exactly what that tag compiles to.
+on:
+  push:
+    tags: ['v*']
+  # Also runnable by hand, so a zip can be produced without cutting a tag.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Never ship an artifact that has not passed the same gate a merge does.
+      # A broken release is worse than no release: it is a broken release with
+      # a download button on it.
+      - name: Verify
+        run: npm run verify
+
+      - name: Package
+        run: npm run pack --workspace @polyfill/extension
+
+      - name: Confirm the zip is loadable
+        run: |
+          cd release
+          unzip -t paper-predictions-*.zip
+          unzip -o -q paper-predictions-*.zip -d _check
+          test -f _check/manifest.json
+          test -f _check/src/content/index.js
+          node -e "JSON.parse(require('fs').readFileSync('_check/manifest.json','utf8'))"
+          rm -rf _check
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paper-predictions-extension
+          path: release/*.zip
+          if-no-files-found: error
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.zip
+          generate_release_notes: true
+          body: |
+            **Install — no build required**
+
+            1. Download `paper-predictions-*.zip` below and unzip it
+            2. Open `chrome://extensions`
+            3. Turn on **Developer mode** (top right)
+            4. **Load unpacked** → select the unzipped folder
+            5. Open any market on Polymarket, Kalshi, Hyperliquid or Limitless
+
+            You start with P$10,000 of simulated money. No sign-up, no account,
+            no wallet. Nothing here can place a real order.

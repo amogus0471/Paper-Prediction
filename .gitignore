@@ -29,8 +29,13 @@ desktop.ini
 # Local fixtures captured from live APIs (large, regenerate with npm run invariants)
 scripts/.fixtures-live/
 
-# Built extension — regenerate with: npm run build --workspace @ghostfill/extension
+# Built extension. Never committed: build output in git goes stale the moment
+# someone edits src and forgets, and then what people download is not what the
+# code says it is. Releases are built from a tag by CI instead.
+#   npm run build --workspace @polyfill/extension   -> apps/extension/dist
+#   npm run pack  --workspace @polyfill/extension   -> release/*.zip
 apps/extension/dist/
+release/
 
 # Vitest writes these next to the config on every run
 **/vitest.config.ts.timestamp-*.mjs

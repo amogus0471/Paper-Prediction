@@ -1,4 +1,4 @@
-// Shared plumbing for every Polyfill Edge Function: CORS, device identity,
+// Shared plumbing for every Edge Function: CORS, device identity,
 // the service_role client, structured logging and typed rejections.
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2';

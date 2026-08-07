@@ -1,5 +1,5 @@
 /**
- * Draw the Polyfill mark as PNGs, at every size the manifest needs.
+ * Draw the Paper Predictions mark as PNGs, at every size the manifest needs.
  *
  * Drawn in code rather than downscaled from the 1024px render, because a 16px
  * favicon made by resampling a 1024px image is mush. At this size every stroke
@@ -20,7 +20,10 @@ import { fileURLToPath } from 'node:url';
 const OUT = resolve(dirname(fileURLToPath(import.meta.url)), '../public/icons');
 
 const BG = [0x0b, 0x0d, 0x10, 255]; // near-black, matches --bg
-const VIOLET = [0x8b, 0x5c, 0xf6, 255]; // brand
+// Brand blue, the same #3B82F6 the popup and dashboard use. It was violet
+// while the rest of the UI already wasn't — an icon that doesn't match the
+// thing it opens reads as someone else's extension in the toolbar.
+const BLUE = [0x3b, 0x82, 0xf6, 255];
 const CLEAR = [0, 0, 0, 0];
 
 /** A tiny RGBA canvas with just the primitives this mark needs. */
@@ -71,7 +74,7 @@ function icon(size) {
 
   // Badge: violet outline over the app background.
   cv.roundRect(pad, pad, box, box, radius, BG);
-  strokeRoundRect(cv, pad, pad, box, box, radius, stroke, VIOLET, BG);
+  strokeRoundRect(cv, pad, pad, box, box, radius, stroke, BLUE, BG);
 
   // Three depth bars, thinning downward.
   const inner = box - stroke * 2 - Math.round(size * 0.08);
@@ -82,18 +85,18 @@ function icon(size) {
   const thin = Math.max(1, Math.round(size * 0.025));
 
   // 1 — full width, solid: deep liquidity at the top of book.
-  cv.roundRect(left, top, inner, barH, Math.max(1, Math.round(barH * 0.22)), VIOLET);
+  cv.roundRect(left, top, inner, barH, Math.max(1, Math.round(barH * 0.22)), BLUE);
 
   // 2 — narrower, half filled: it is already thinning.
   const w2 = Math.round(inner * 0.72);
   const y2 = top + barH + gap;
-  strokeRoundRect(cv, left, y2, w2, barH, Math.max(1, Math.round(barH * 0.22)), thin, VIOLET, BG);
-  cv.roundRect(left + thin, y2 + thin, Math.round(w2 * 0.55) - thin, barH - thin * 2, 0, VIOLET);
+  strokeRoundRect(cv, left, y2, w2, barH, Math.max(1, Math.round(barH * 0.22)), thin, BLUE, BG);
+  cv.roundRect(left + thin, y2 + thin, Math.round(w2 * 0.55) - thin, barH - thin * 2, 0, BLUE);
 
   // 3 — narrowest, outline only: the last level, barely there.
   const w3 = Math.round(inner * 0.44);
   const y3 = y2 + barH + gap;
-  strokeRoundRect(cv, left, y3, w3, barH, Math.max(1, Math.round(barH * 0.22)), thin, VIOLET, BG);
+  strokeRoundRect(cv, left, y3, w3, barH, Math.max(1, Math.round(barH * 0.22)), thin, BLUE, BG);
 
   return { px: cv.px, size };
 }

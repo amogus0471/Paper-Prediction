@@ -11,9 +11,17 @@
  *   https://polymarket.com/event/<event-slug>/<market-slug>
  *   https://kalshi.com/markets/<series>/<subtitle>
  *   https://kalshi.com/markets/<series>/<subtitle>/<event-ticker>
+ *   https://app.hyperliquid.xyz/outcomes/<coin>
+ *   https://app.hyperliquid.xyz/trade/#<coin>
+ *   https://limitless.exchange/markets/<slug>
  */
 
-import { KalshiAdapter, PolymarketAdapter } from '@polyfill/venues';
+import {
+  HyperliquidAdapter,
+  KalshiAdapter,
+  LimitlessAdapter,
+  PolymarketAdapter,
+} from '@polyfill/venues';
 import type { BookRef, NormalizedMarket } from '@polyfill/venues';
 import type { MarketMeta } from './engine';
 
@@ -28,6 +36,8 @@ export function parseVenueUrl(
 ):
   | { venue: 'polymarket'; slug: string }
   | { venue: 'kalshi'; series: string; ticker?: string; slug?: string }
+  | { venue: 'hyperliquid'; coin: string }
+  | { venue: 'limitless'; slug: string }
   | null {
   let u: URL;
   try {
@@ -38,9 +48,47 @@ export function parseVenueUrl(
 
   const parts = u.pathname.split('/').filter(Boolean);
 
+  if (u.hostname.endsWith('hyperliquid.xyz')) {
+    // Route is `/outcomes/:coin`, read straight out of their bundle. The coin
+    // is a HIP-4 asset id like `#10250`, and the literal `#` is why this needs
+    // three shapes rather than one:
+    //
+    //   /outcomes/%2310250   the encoded path form
+    //   /trade/#10250        where their own router lands you — an unescaped
+    //                        `#` in a path IS a fragment, so the coin arrives
+    //                        in location.hash and pathname is just "/trade/"
+    //   /outcomes/10250      the bare digits, if a link ever drops the hash
+    //
+    // Verified live: /outcomes/%2310250 redirects to /trade/#10250, while an
+    // unknown coin falls back to /trade/HYPE — which is how we know the app
+    // resolved it rather than ignored it.
+    const hash = u.hash.startsWith('#') ? u.hash.slice(1) : '';
+    const seg = parts[0] === 'outcomes' || parts[0] === 'trade' ? (parts[1] ?? '') : '';
+    let coin = '';
+    try {
+      coin = decodeURIComponent(seg);
+    } catch {
+      coin = seg;
+    }
+    if (!coin && hash) coin = `#${hash}`;
+    if (/^\d+$/.test(coin)) coin = `#${coin}`;
+
+    // A perp lives at /trade/BTC and is NOT a prediction — leverage, funding
+    // and liquidation, and it never settles to $1/$0. Only `#`-prefixed
+    // outcome assets get a popup.
+    if (!/^#\d+[01]$/.test(coin)) return null;
+    return { venue: 'hyperliquid', coin };
+  }
+
   if (u.hostname.endsWith('polymarket.com')) {
     // /event/<slug> — the slug is the event, not the market.
     if (parts[0] === 'event' && parts[1]) return { venue: 'polymarket', slug: parts[1] };
+    return null;
+  }
+
+  if (u.hostname.endsWith('limitless.exchange')) {
+    // /markets/<slug>, and the slug is also the book's address.
+    if (parts[0] === 'markets' && parts[1]) return { venue: 'limitless', slug: parts[1] };
     return null;
   }
 
@@ -134,10 +182,62 @@ function toMeta(m: NormalizedMarket, category: string): MarketMeta {
 
 const polymarket = new PolymarketAdapter();
 const kalshi = new KalshiAdapter({ env: 'prod' });
+const hyperliquid = new HyperliquidAdapter();
+const limitless = new LimitlessAdapter();
+
+const ADAPTERS = { polymarket, kalshi, hyperliquid, limitless } as const;
+
+export function adapterFor(venue: string) {
+  return ADAPTERS[venue as keyof typeof ADAPTERS] ?? polymarket;
+}
+
+/**
+ * The markets a page should offer, preferring open ones but never returning
+ * nothing when the page clearly has a market on it.
+ *
+ * Returning `null` for a past-its-end-date market is why the popup "sometimes
+ * doesn't appear": a finished esports event still lists as an open EVENT with
+ * forty closed markets under it, so the panel silently declined to exist and
+ * looked exactly like a broken extension. Showing it and letting the engine's
+ * `market_closed` guard explain itself is strictly better — nothing here can
+ * be traded either way, and the difference is whether the user is told.
+ */
+function tradeableMarkets(markets: NormalizedMarket[]): NormalizedMarket[] {
+  const open = markets.filter((m) => m.status === 'open');
+  if (open.length > 0) return open;
+  return markets.filter((m) => m.status !== 'resolved');
+}
 
 export async function resolveUrl(url: string): Promise<ResolvedMarket | null> {
   const parsed = parseVenueUrl(url);
   if (!parsed) return null;
+
+  if (parsed.venue === 'limitless') {
+    // One market per slug and no event grouping, so there are no siblings to
+    // offer — the picker simply does not appear on this venue.
+    const [market] = await limitless.getMarkets([parsed.slug]);
+    if (!market) return null;
+    const category = market.venue === 'limitless' ? 'Limitless' : market.venue;
+    const meta = toMeta(market, category);
+    return { meta, siblings: [{ meta, mid: market.midPrice ?? null }] };
+  }
+
+  if (parsed.venue === 'hyperliquid') {
+    // outcomeMeta describes every live outcome in one call, so finding the coin
+    // and its siblings costs the same as finding the coin alone.
+    const { events } = await hyperliquid.listEvents();
+    for (const ev of events) {
+      const hit = ev.markets.find((m) => m.venueMarketId === parsed.coin);
+      if (!hit) continue;
+      const tradeable = tradeableMarkets(ev.markets);
+      if (tradeable.length === 0) return null;
+      return {
+        meta: toMeta(hit, ev.category),
+        siblings: tradeable.map((m) => ({ meta: toMeta(m, ev.category), mid: m.midPrice ?? null })),
+      };
+    }
+    return null;
+  }
 
   if (parsed.venue === 'polymarket') {
     const res = await fetch(
@@ -153,7 +253,7 @@ export async function resolveUrl(url: string): Promise<ResolvedMarket | null> {
       normalizeEvent(e: unknown): { category: string; markets: NormalizedMarket[] };
     }).normalizeEvent(events[0]);
 
-    const tradeable = normalized.markets.filter((m) => m.status === 'open');
+    const tradeable = tradeableMarkets(normalized.markets);
     if (tradeable.length === 0) return null;
 
     return {
@@ -201,7 +301,7 @@ export async function resolveUrl(url: string): Promise<ResolvedMarket | null> {
     normalizeEvent(e: unknown): { category: string; markets: NormalizedMarket[] };
   }).normalizeEvent(event);
 
-  const tradeable = normalized.markets.filter((m) => m.status === 'open');
+  const tradeable = tradeableMarkets(normalized.markets);
   if (tradeable.length === 0) return null;
 
   return {
@@ -242,6 +342,23 @@ async function resolveBookRef(meta: MarketMeta): Promise<BookRef> {
     return ref;
   }
 
+  // Limitless addresses a book by the same slug that identifies the market.
+  // 6 is USDC's decimals and every market on the venue is USDC-collateralised;
+  // a market that somehow is not will carry its own value in `meta.bookRef`.
+  if (meta.venue === 'limitless') {
+    const ref = { venue: 'limitless' as const, slug: meta.venueMarketId, decimals: 6 };
+    bookRefCache.set(key, ref);
+    return ref;
+  }
+
+  // Hyperliquid's two coins are derived from the market id by string rule.
+  if (meta.venue === 'hyperliquid') {
+    const base = meta.venueMarketId.replace(/[01]$/, '');
+    const ref = { venue: 'hyperliquid' as const, yesCoin: `${base}0`, noCoin: `${base}1` };
+    bookRefCache.set(key, ref);
+    return ref;
+  }
+
   // Polymarket alone needs its ERC-1155 token pair fetched. Once, ever.
   const adapter = polymarket;
   const markets = await adapter.getMarkets([meta.venueMarketId]);
@@ -253,23 +370,88 @@ async function resolveBookRef(meta: MarketMeta): Promise<BookRef> {
   return ref;
 }
 
-export async function fetchBook(meta: MarketMeta) {
-  const adapter = meta.venue === 'polymarket' ? polymarket : kalshi;
-  const ref = await resolveBookRef(meta);
-  const book = await adapter.getOrderBook(ref);
-  return { book, meta };
+/**
+ * Book cache and in-flight de-duplication.
+ *
+ * The overlay asks for the same book three ways at once — GET_BOOK to paint
+ * the price, QUOTE to price the ticket, and a watchlist sweep that may cover
+ * the same market — each of which used to be its own venue round trip. On
+ * Polymarket, where a book is two tokens, that was four CLOB reads a second
+ * against a budget that tightens near a hundred a minute. The 429s that earned
+ * are exactly why prices "randomly" stopped updating: `refreshBook` swallows
+ * errors, so a rate-limited poll looks identical to a working one that found
+ * no change.
+ *
+ * The TTL is deliberately shorter than the poll interval, so a cache hit only
+ * ever collapses requests that belong to the SAME tick. Nothing is ever served
+ * from a previous second.
+ */
+export const BOOK_CACHE_MS = 700;
+
+interface CachedBook {
+  book: Awaited<ReturnType<PolymarketAdapter['getOrderBook']>>;
+  at: number;
+}
+
+const bookCache = new Map<string, CachedBook>();
+const bookInFlight = new Map<string, Promise<CachedBook['book']>>();
+
+/** Drop a market's cached book, so the next read is guaranteed to hit the venue. */
+export function invalidateBook(meta: MarketMeta): void {
+  bookCache.delete(`${meta.venue}:${meta.venueMarketId}`);
+}
+
+/**
+ * Fetch a live book for a market the overlay already resolved.
+ *
+ * `fresh` bypasses both the cache AND any in-flight request. Every path that
+ * commits a fill must pass it: rule 3 of the fill engine says the fill is
+ * walked against a book fetched AFTER the quote, and joining a request that
+ * was already running when the quote was made would quietly break that.
+ */
+export async function fetchBook(meta: MarketMeta, opts: { fresh?: boolean } = {}) {
+  const key = `${meta.venue}:${meta.venueMarketId}`;
+
+  if (!opts.fresh) {
+    const hit = bookCache.get(key);
+    if (hit && Date.now() - hit.at < BOOK_CACHE_MS) return { book: hit.book, meta };
+    const flying = bookInFlight.get(key);
+    if (flying) return { book: await flying, meta };
+  }
+
+  const adapter = adapterFor(meta.venue);
+  const task = (async () => {
+    const ref = await resolveBookRef(meta);
+    const book = await adapter.getOrderBook(ref);
+    bookCache.set(key, { book, at: Date.now() });
+    // Bounded: one entry per market the session has touched, and they are tiny.
+    if (bookCache.size > 200) {
+      for (const k of [...bookCache.keys()].slice(0, 100)) bookCache.delete(k);
+    }
+    return book;
+  })();
+
+  // Only a non-fresh fetch is publishable for others to join.
+  if (!opts.fresh) bookInFlight.set(key, task);
+  try {
+    return { book: await task, meta };
+  } finally {
+    if (bookInFlight.get(key) === task) bookInFlight.delete(key);
+  }
 }
 
 /** Trending markets for the side panel's browse view. Nothing is persisted. */
 export async function trending(limit = 24) {
-  const [pm, ks] = await Promise.allSettled([
+  const [pm, ks, hl, lx] = await Promise.allSettled([
     polymarket.listEvents(undefined, Math.ceil(limit / 2)),
     kalshi.listEvents(undefined, Math.ceil(limit / 2)),
+    hyperliquid.listEvents(),
+    limitless.listEvents(),
   ]);
 
   const out: { meta: MarketMeta; mid: number | null; volume24h: number; category: string; imageUrl?: string }[] = [];
 
-  for (const settled of [pm, ks]) {
+  for (const settled of [pm, ks, hl, lx]) {
     if (settled.status !== 'fulfilled') continue;
     for (const ev of settled.value.events) {
       for (const m of ev.markets) {

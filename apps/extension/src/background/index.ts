@@ -18,13 +18,13 @@ import {
   closePosition,
   OrderError,
 } from '../lib/engine';
-import { fetchBook, resolveUrl, searchMarkets, trending } from '../lib/resolve';
+import { adapterFor, fetchBook, resolveUrl, searchMarkets, trending } from '../lib/resolve';
 import { loadState, mutate, freshState, saveState, marketKey, summarize } from '../lib/store';
 import { buildRecord } from '../lib/record';
 import { dueForRefresh, isWatched, metaOf, noteMid, toggleWatch } from '../lib/watchlist';
 import { evaluateAlerts } from '../lib/alerts';
 import type { Request, Response } from '../lib/messages';
-import { REALISM, midPrice } from '@polyfill/core';
+import { BRAND, REALISM, midPrice } from '@polyfill/core';
 
 chrome.runtime.onInstalled.addListener(async () => {
   // Touch the store so a fresh install has a portfolio before the first render.
@@ -195,7 +195,10 @@ async function handle(req: Request): Promise<unknown> {
       const remaining = latency - elapsed;
       if (remaining > 0) await sleep(remaining);
 
-      const { book: fillBook } = await fetchBook(req.meta);
+      // `fresh` is load-bearing, not an optimisation opt-out: the whole point
+      // of this branch is to fill against a book that did not exist when the
+      // quote was made. A cached or already-in-flight book could predate it.
+      const { book: fillBook } = await fetchBook(req.meta, { fresh: true });
       const order = await submitOrder({ meta: req.meta, quote: req.quote, fillBook });
       const state = await loadState();
       return { order, state };
@@ -211,7 +214,7 @@ async function handle(req: Request): Promise<unknown> {
       if (Date.now() - new Date(order.ts).getTime() > 15_000) {
         throw new OrderError('not_undoable', 'The undo window has passed — that is a real trade now.');
       }
-      const { book } = await fetchBook(req.meta);
+      const { book } = await fetchBook(req.meta, { fresh: true });
       return closePosition({
         meta: req.meta,
         outcome: order.outcome,
@@ -224,7 +227,7 @@ async function handle(req: Request): Promise<unknown> {
 
     case 'CLOSE_POSITION': {
       const s2 = await loadState();
-      const { book } = await fetchBook(req.meta);
+      const { book } = await fetchBook(req.meta, { fresh: true });
       return closePosition({
         meta: req.meta,
         outcome: req.outcome,
@@ -356,7 +359,7 @@ async function settlementSweep(): Promise<{ checked: number; settled: number }> 
     chrome.notifications?.create?.({
       type: 'basic',
       iconUrl: 'icons/icon128.png',
-      title: 'Polyfill — market settled',
+      title: `${BRAND.name} — market settled`,
       message: `${settled} position${settled === 1 ? '' : 's'} resolved. Open the panel to see the result.`,
     });
   }
@@ -369,6 +372,12 @@ async function checkResolution(
   venue: string,
   venueMarketId: string,
 ): Promise<'yes' | 'no' | null | undefined> {
+  if (venue === 'limitless' || venue === 'hyperliquid') {
+    const [res] = await adapterFor(venue).getResolutions([venueMarketId]);
+    if (!res || res.status !== 'resolved') return undefined;
+    return res.resolution;
+  }
+
   if (venue === 'kalshi') {
     const res = await fetch(
       `https://api.elections.kalshi.com/trade-api/v2/markets/${encodeURIComponent(venueMarketId)}`,

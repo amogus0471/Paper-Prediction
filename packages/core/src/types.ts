@@ -1,6 +1,6 @@
 /** Shared vocabulary. Everything downstream of a venue adapter speaks only this. */
 
-export type VenueCode = 'polymarket' | 'kalshi' | 'hyperliquid';
+export type VenueCode = 'polymarket' | 'kalshi' | 'hyperliquid' | 'limitless';
 export type OutcomeSide = 'yes' | 'no';
 export type OrderSide = 'buy' | 'sell';
 export type OrderType = 'market' | 'limit';
@@ -99,7 +99,7 @@ export type FeeModel =
 export interface MarketRules {
   tickCents: number;
   minOrderSize: number;
-  /** Polyfill's own guardrail: max share of visible depth a single order may take. */
+  /** Our own guardrail: max share of visible depth a single order may take. */
   maxDepthFraction: number;
 }
 

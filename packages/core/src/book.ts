@@ -1,4 +1,4 @@
-import { clamp, floorQty, roundMoney, roundPrice, roundQty, snapToTick } from './decimal';
+import { clamp, floorQty, QTY_DP, roundMoney, roundPrice, roundQty, snapToTick } from './decimal';
 import type { Ladder, Level, WalkFill, WalkResult, WalkTarget } from './types';
 
 /**
@@ -27,8 +27,24 @@ export function walkBook(levels: Level[], target: WalkTarget, tickCents = 1): Wa
     return { fills, avgPrice: 0, totalQty: 0, cost: 0, partial: false, unfilledQty: 0, levelsConsumed: 0 };
   }
 
+  /**
+   * Why the walk stopped — the difference between "the book ran out" and "your
+   * budget bought everything it could afford".
+   *
+   * Only the first is a partial fill. Quantities are floored to QTY_DP, so a
+   * $100 order at 99.1c leaves ~0.009 of a cent that cannot buy another
+   * hundredth of a share. That residue was being reported as "book ran out"
+   * next to millions of dollars of visible depth, which is not a rounding
+   * nitpick: it tells the user their order was truncated when it was filled.
+   */
+  let exhaustedBook = true;
+  let lastPriceUsd = 0;
+
   for (const level of levels) {
-    if (remainingQty <= 0 || remainingUsd <= 0) break;
+    if (remainingQty <= 0 || remainingUsd <= 0) {
+      exhaustedBook = false;
+      break;
+    }
 
     const rawPrice = level[0];
     const availableSize = level[1];
@@ -48,7 +64,12 @@ export function walkBook(levels: Level[], target: WalkTarget, tickCents = 1): Wa
     // Floor, never round: rounding a partial unit up would overspend a budget
     // the user explicitly capped, and would claim depth the level did not hold.
     const take = floorQty(Math.min(byQty, byUsd, availableSize));
-    if (!(take > 0)) break;
+    if (!(take > 0)) {
+      // The level had size; we simply could not afford a whole unit of it.
+      exhaustedBook = false;
+      break;
+    }
+    lastPriceUsd = priceUsd;
 
     const notional = roundMoney(take * priceUsd);
 
@@ -64,12 +85,21 @@ export function walkBook(levels: Level[], target: WalkTarget, tickCents = 1): Wa
   const avgPrice = totalQty > 0 ? roundPrice((cost / totalQty) * 100) : 0;
   const unfilledQty = target.kind === 'qty' ? roundQty(Math.max(0, target.qty - totalQty)) : 0;
 
+  // A budget walk is partial only when the book gave out with money still on
+  // the table AND that money could have bought at least one more unit. Below
+  // one unit there was nothing left to buy at any depth, so the order is done.
+  const oneUnit = 10 ** -QTY_DP;
+  const partial =
+    target.kind === 'qty'
+      ? unfilledQty > 0
+      : exhaustedBook && totalQty > 0 && remainingUsd > lastPriceUsd * oneUnit;
+
   return {
     fills,
     avgPrice,
     totalQty,
     cost,
-    partial: target.kind === 'qty' ? unfilledQty > 0 : remainingUsd > 0.0001 && totalQty > 0,
+    partial,
     unfilledQty,
     levelsConsumed: fills.length,
   };

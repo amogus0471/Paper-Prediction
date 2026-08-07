@@ -15,12 +15,29 @@ import { checkBookInvariants } from '@polyfill/core';
 
 const memory = new Map<string, unknown>();
 
+// `get` MUST accept an array of keys, not just a string.
+//
+// This shim used to take a single string, and `loadState` reads two keys at
+// once (the current one and the pre-rename one it migrates from). An array
+// argument stringified into a key that was never set, so every load missed,
+// fell through to freshState(), and SAVED it — silently resetting the
+// portfolio to P$10,000 on every single read. The tests then reported that
+// fills do not debit cash, which was a lie told by the harness rather than a
+// bug in the engine. Matching the real chrome.storage contract is the fix.
 vi.stubGlobal('chrome', {
   storage: {
     local: {
-      get: async (key: string) => ({ [key]: memory.get(key) }),
+      get: async (keys: string | string[]) => {
+        const list = Array.isArray(keys) ? keys : [keys];
+        const out: Record<string, unknown> = {};
+        for (const k of list) if (memory.has(k)) out[k] = memory.get(k);
+        return out;
+      },
       set: async (obj: Record<string, unknown>) => {
         for (const [k, v] of Object.entries(obj)) memory.set(k, v);
+      },
+      remove: async (keys: string | string[]) => {
+        for (const k of Array.isArray(keys) ? keys : [keys]) memory.delete(k);
       },
     },
   },

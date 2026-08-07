@@ -113,6 +113,42 @@ describe('walkBook — the honesty contract', () => {
     expect(short.unfilledQty).toBe(1500);
   });
 
+  it('does not call a fully-spent budget partial just because change is left over', () => {
+    // The screenshot bug. P$100 into a 99.1c ask with effectively unlimited
+    // depth: quantities floor to 2dp, so 100.90 shares cost P$99.99 and about
+    // nine tenths of a cent is left — not enough for another hundredth of a
+    // share at any price. The book did not run out; the money did.
+    const deep: Level[] = [
+      [99.1, 500_000],
+      [99.2, 500_000],
+    ];
+    const walk = walkBook(deep, { kind: 'notional', usd: 100 }, 0.1);
+
+    expect(walk.partial).toBe(false);
+    expect(walk.cost).toBeLessThanOrEqual(100);
+    expect(walk.cost).toBeGreaterThan(99.9);
+    // Still honest about the residue existing — we just do not call it partial.
+    expect(walk.totalQty).toBeGreaterThan(100);
+  });
+
+  it('still reports partial when the budget really does outlive the book', () => {
+    // 10 units at 50c is P$5 of depth against a P$100 order. That IS partial,
+    // and the distinction from the case above is the whole point.
+    const thin: Level[] = [[50, 10]];
+    const walk = walkBook(thin, { kind: 'notional', usd: 100 });
+
+    expect(walk.partial).toBe(true);
+    expect(walk.totalQty).toBe(10);
+    expect(walk.cost).toBe(5);
+  });
+
+  it('is not partial when the budget lands exactly on the book', () => {
+    const exact: Level[] = [[50, 10]];
+    const walk = walkBook(exact, { kind: 'notional', usd: 5 });
+    expect(walk.partial).toBe(false);
+    expect(walk.totalQty).toBe(10);
+  });
+
   it('walks a thin book to a genuinely bad average — the lesson', () => {
     // 5 shares at 63c, then a wall of nothing until 92c.
     const levels: Level[] = [

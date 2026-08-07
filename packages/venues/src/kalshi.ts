@@ -27,7 +27,7 @@ import { VenueError } from './types';
  *
  * That contradicts guidance saying the orderbook requires RSA-PSS signing, so
  * it is worth being explicit: signing is required for account and trading
- * endpoints, which Polyfill never calls, because Polyfill never places a real
+ * endpoints, which this never calls, because it never places a real
  * order. If a read ever starts returning 401, `KalshiAdapter` will surface it
  * as a retryable VenueError rather than silently serving a stale book.
  */

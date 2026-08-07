@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Paper Predictions \u2014 Practise Prediction Markets",
+  "name": "Paper Predictions — Practise Prediction Markets",
   "version": "0.2.0",
-  "description": "Practise trading real Polymarket and Kalshi markets with simulated money. Fills price against the real order book. No real money, ever.",
+  "description": "Practise trading real Polymarket, Kalshi, Hyperliquid and Limitless markets with simulated money. Fills price against the real order book. No real money, ever.",
   "minimum_chrome_version": "116",
   "permissions": [
     "storage",
@@ -12,14 +12,16 @@
   "host_permissions": [
     "https://gamma-api.polymarket.com/*",
     "https://clob.polymarket.com/*",
-    "https://api.elections.kalshi.com/*"
+    "https://api.elections.kalshi.com/*",
+    "https://api.hyperliquid.xyz/*",
+    "https://api.limitless.exchange/*"
   ],
   "background": {
     "service_worker": "src/background/index.js",
     "type": "module"
   },
   "action": {
-    "default_title": "Paper Predictions \u2014 open dashboard",
+    "default_title": "Paper Predictions — open dashboard",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",
@@ -31,7 +33,9 @@
     {
       "matches": [
         "https://polymarket.com/*",
-        "https://kalshi.com/*"
+        "https://kalshi.com/*",
+        "https://app.hyperliquid.xyz/*",
+        "https://limitless.exchange/*"
       ],
       "js": [
         "src/content/index.js"

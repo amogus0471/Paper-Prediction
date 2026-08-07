@@ -5,6 +5,39 @@ import { HyperliquidAdapter, coinFor } from '../src/hyperliquid';
 const LIVE = process.env.LIVE === '1';
 const dLive = LIVE ? describe : describe.skip;
 
+describe('bucket names — markets that would otherwise be indistinguishable', () => {
+  const hl = new HyperliquidAdapter() as unknown as {
+    // Exercised through listEvents in the live suite; reached directly here so
+    // the naming rules are pinned without a network call.
+    constructor: unknown;
+  };
+  void hl;
+
+  it('every leg of a bucket question gets a distinct, readable title', async () => {
+    const { nameBucketForTest } = await import('../src/hyperliquid');
+    const parent = 'class:priceBucket|underlying:BTC|priceThresholds:63019,65592|period:1d';
+
+    const titles = ['index:0', 'index:1', 'index:2', 'other'].map((d) =>
+      nameBucketForTest(d, parent),
+    );
+
+    expect(titles).toEqual([
+      'Will BTC settle below $63,019?',
+      'Will BTC settle between $63,019 and $65,592?',
+      'Will BTC settle above $65,592?',
+      'Will BTC settle outside $63,019–$65,592?',
+    ]);
+    // The actual requirement: no two legs share a title.
+    expect(new Set(titles).size).toBe(4);
+  });
+
+  it('declines to invent a name when the parent carries no thresholds', async () => {
+    const { nameBucketForTest } = await import('../src/hyperliquid');
+    expect(nameBucketForTest('index:0', 'class:priceBinary|underlying:BTC')).toBeNull();
+    expect(nameBucketForTest('other', '')).toBeNull();
+  });
+});
+
 describe('coinFor — the id that is easy to get wrong', () => {
   it('concatenates, never adds', () => {
     expect(coinFor(1025, 0)).toBe('#10250');

@@ -37,6 +37,7 @@ import {
 } from '@polyfill/core';
 import {
   findPosition,
+  loadState,
   marketKey,
   mutate,
   pushTxn,
@@ -539,10 +540,23 @@ export async function submitOrder(opts: SubmitOpts): Promise<StoredOrder> {
   });
 }
 
-/** Mark open positions on a market against a fresh book. */
+/**
+ * Mark open positions on a market against a fresh book.
+ *
+ * The early return matters more than it looks. This is called on every book
+ * poll — once a second — and `mutate` is a full read-modify-write of the whole
+ * portfolio through chrome.storage. Doing that for a market the user holds
+ * nothing in was pure overhead on the hot path, and it serialised behind the
+ * same mutation queue that an incoming order needs.
+ */
 export async function markPositions(key: string, book: NormalizedBook): Promise<void> {
   const yesMid = midPrice(book.yes);
   if (yesMid == null) return;
+
+  const state = await loadState();
+  const holds = state.positions.some((p) => p.marketKey === key && p.isOpen);
+  if (!holds) return;
+
   await mutate((state) => {
     for (const p of state.positions) {
       if (p.marketKey !== key || !p.isOpen) continue;

@@ -4,8 +4,10 @@ export * from './http';
 export { PolymarketAdapter, normalizeLadder, bookMid } from './polymarket';
 export { KalshiAdapter, normalizeKalshiBook } from './kalshi';
 export { HyperliquidAdapter, coinFor } from './hyperliquid';
+export { LimitlessAdapter, mirror } from './limitless';
 
 import { HyperliquidAdapter } from './hyperliquid';
+import { LimitlessAdapter } from './limitless';
 import { KalshiAdapter } from './kalshi';
 import { PolymarketAdapter } from './polymarket';
 import type { VenueAdapter, VenueCode } from './types';
@@ -19,5 +21,6 @@ export function createAdapters(opts: { kalshiEnv?: 'prod' | 'demo' } = {}): Reco
     polymarket: new PolymarketAdapter(),
     kalshi: new KalshiAdapter({ env: opts.kalshiEnv ?? 'prod' }),
     hyperliquid: new HyperliquidAdapter(),
+    limitless: new LimitlessAdapter(),
   };
 }

@@ -67,7 +67,12 @@ export class HyperliquidAdapter implements VenueAdapter {
     const events: NormalizedEvent[] = [];
 
     for (const q of meta.questions ?? []) {
-      const ids = q.namedOutcomes ?? [];
+      // The fallback outcome belongs to the question too — it is "none of the
+      // named buckets". Left out of the group it surfaced as a standalone
+      // market whose entire title was the word "other", which is the same
+      // failure as the old "index:0" one: a real, tradeable market that a
+      // person cannot tell apart from anything else.
+      const ids = [...(q.namedOutcomes ?? []), ...(q.fallbackOutcome != null ? [q.fallbackOutcome] : [])];
       const markets: NormalizedMarket[] = [];
       for (const id of ids) {
         const o = byId.get(id);
@@ -224,6 +229,17 @@ export function coinFor(outcome: number, side: 0 | 1): string {
   return `#${outcome}${side}`;
 }
 
+/**
+ * Bucket naming, reachable from tests without a network round trip.
+ *
+ * The rules matter enough to pin directly: getting them wrong ships several
+ * markets that all read the same, which the live suite only catches when a
+ * bucket question happens to be live at the time.
+ */
+export function nameBucketForTest(description: string, parentDescription: string): string | null {
+  return bucketName(description, parseSpec(parentDescription));
+}
+
 function toLadder(raw: RawBook | null | undefined): Ladder {
   const bids = levels(raw?.levels?.[0]);
   const asks = levels(raw?.levels?.[1]);
@@ -315,18 +331,30 @@ function describe(spec: Spec, fallback: string | undefined): string {
 /**
  * Name a bucket outcome from its parent question.
  *
- * A bucket describes itself only as "index:0", which is meaningless alone —
- * the thresholds live on the question. Without this, three of Hyperliquid's
- * markets render as "index:0", "index:1", "index:2" and cannot be told apart.
+ * A bucket describes itself only as "index:0", and the question's fallback
+ * describes itself only as "other". Both are meaningless alone — the
+ * thresholds live on the question. Without this, four of Hyperliquid's markets
+ * render as "index:0", "index:1", "index:2" and "other", and no one can tell
+ * them apart or know what they are buying.
  */
 function bucketName(description: string | undefined, parent: Spec | undefined): string | null {
-  const m = /^index:(\d+)$/.exec((description ?? '').trim());
-  if (!m || !parent?.priceThresholds?.length) return null;
+  const desc = (description ?? '').trim();
+  const t = parent?.priceThresholds;
+  if (!t?.length) return null;
 
-  const i = Number(m[1]);
-  const t = parent.priceThresholds;
-  const asset = parent.underlying ?? 'it';
+  const asset = parent?.underlying ?? 'it';
   const money = (n: number) => '$' + n.toLocaleString('en-US');
+
+  // The catch-all leg: the price landed outside every named bucket.
+  if (desc === 'other') {
+    return t.length === 1
+      ? `Will ${asset} settle away from ${money(t[0]!)}?`
+      : `Will ${asset} settle outside ${money(t[0]!)}–${money(t[t.length - 1]!)}?`;
+  }
+
+  const m = /^index:(\d+)$/.exec(desc);
+  if (!m) return null;
+  const i = Number(m[1]);
 
   // n thresholds produce n+1 buckets: below the first, between each pair, and
   // above the last.

@@ -1,8 +1,8 @@
 {
-  "name": "ghostfill",
+  "name": "paper-predictions",
   "private": true,
   "version": "0.1.0",
-  "description": "Paper trade real prediction markets. Server-authoritative ghost fills against live order books.",
+  "description": "Paper-trade real prediction markets against the real order book. Chrome MV3 extension. No real money, ever.",
   "workspaces": [
     "packages/*",
     "apps/*"
@@ -20,7 +20,8 @@
     "invariants": "npm test --workspace @polyfill/venues -- test/live-invariants.test.ts",
     "build:edge": "node scripts/build-edge-shared.mjs",
     "build:functions": "node scripts/build-functions.mjs",
-    "verify": "npm run check:secrets && npm run typecheck --workspaces --if-present && npm test --workspaces --if-present && npm run build --workspace @polyfill/extension"
+    "verify": "npm run check:secrets && npm run typecheck --workspaces --if-present && npm test --workspaces --if-present && npm run build --workspace @polyfill/extension",
+    "pack": "npm run build --workspace @polyfill/extension && npm run pack --workspace @polyfill/extension"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
@@ -30,5 +31,6 @@
     "prettier": "^3.4.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
-  }
+  },
+  "license": "MIT"
 }

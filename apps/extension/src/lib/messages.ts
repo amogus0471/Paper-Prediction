@@ -62,7 +62,7 @@ export interface SubmitResult {
 /** Typed wrapper so callers get a rejected promise instead of an `ok:false`. */
 export async function send<T>(req: Request): Promise<T> {
   const res = (await chrome.runtime.sendMessage(req)) as Response<T> | undefined;
-  if (!res) throw new Error('No response from Polyfill background worker.');
+  if (!res) throw new Error('No response from the background worker.');
   if (!res.ok) {
     const err = new Error(res.message) as Error & { code?: string; detail?: string };
     err.code = res.error;

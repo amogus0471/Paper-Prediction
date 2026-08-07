@@ -40,8 +40,14 @@ interface Live {
   yes: number | null;
   no: number | null;
   spread: number | null;
-  depth: number | null;
+  /** When the last book actually landed. Null until the first one does. */
+  at: number | null;
+  /** Consecutive failed polls — what turns a silent freeze into a visible one. */
+  misses: number;
 }
+
+/** Beyond this, the price on screen is old enough to say so. */
+const STALE_AFTER_MS = 6000;
 
 let shadow: ShadowRoot | null = null;
 let wrap: HTMLDivElement | null = null;
@@ -49,7 +55,7 @@ let settings: Settings | null = null;
 let market: ResolvedMarket | null = null;
 let meta: MarketMeta | null = null;
 let quote: QuoteResult | null = null;
-let live: Live = { yes: null, no: null, spread: null, depth: null };
+let live: Live = { yes: null, no: null, spread: null, at: null, misses: 0 };
 let pnl: { equity: number; delta: number } | null = null;
 let outcome: 'yes' | 'no' = 'yes';
 let amount = 100;
@@ -87,6 +93,9 @@ interface Nodes {
   extra: HTMLDivElement;
   picker: HTMLDivElement | null;
   pickerLabel: HTMLSpanElement | null;
+  /** The panel wrapper, so the whole card can be dimmed when prices go stale. */
+  wrapEl: HTMLDivElement;
+  stale: HTMLDivElement;
 }
 let n: Nodes | null = null;
 
@@ -309,6 +318,18 @@ ${ODOMETER_CSS}
 .muted { color: var(--mute); font-size: 11px; }
 
 .extra { display: grid; gap: 4px; }
+
+/* Stale prices.
+   Hidden entirely while the feed is healthy — a status line that is always
+   there is a status line nobody reads. When it does appear, the numbers dim
+   rather than vanish: the last real price is still the best information we
+   have, it just is not current any more. */
+.stale-note { display: none; font-size: 10.5px; color: #F59E0B;
+  align-items: center; gap: 5px; }
+.stale-note::before { content: ''; width: 5px; height: 5px; border-radius: 50%;
+  background: #F59E0B; flex: 0 0 auto; animation: fade 1.6s infinite; }
+.card.stale .stale-note { display: flex; }
+.card.stale .side .p, .card.stale .tick, .card.stale .extra { opacity: .55; }
 
 .go { width: 100%; padding: 12px; border: 0; border-radius: 12px; cursor: pointer;
   font: inherit; font-size: 13.5px; font-weight: 800; color: #06070A;
@@ -668,11 +689,12 @@ function buildPanel(): void {
   const chips = el('div', 'chips');
   const ticket = el('div', 'tick');
   const extra = el('div', 'extra');
+  const stale = el('div', 'stale-note');
   const go = el('button', 'go y');
 
   body.append(question);
   if (picker) body.append(picker);
-  body.append(sides, amt, chips, ticket, extra, go);
+  body.append(sides, amt, chips, ticket, extra, stale, go);
 
   const grip = el('div', 'grip');
   grip.title = 'Drag to resize';
@@ -697,6 +719,8 @@ function buildPanel(): void {
     extra,
     picker,
     pickerLabel,
+    wrapEl: card,
+    stale,
   };
 
   // events
@@ -826,7 +850,9 @@ function paint(): void {
         ['You get', `${quote.qty.toLocaleString()} ${quote.unitNoun}`],
         ['Cost', `P$${quote.totalCost.toFixed(2)}`, 'lead'],
         ['If it wins', `+P$${quote.maxProfit.toFixed(2)}`, 'big'],
-        ...(quote.partial ? ([['Partial fill', 'book ran out', 'warn']] as [string, string, string][]) : []),
+        ...(quote.partial
+          ? ([['Partial fill', 'book ran out', 'warn']] as [string, string, string][])
+          : []),
       ]
     : [];
   syncRows(n.ticket, rows);
@@ -839,9 +865,18 @@ function paint(): void {
       live.spread >= 4 ? 'warn' : undefined,
     ]);
   }
-  if (live.depth != null) extras.push(['Visible depth', `P$${Math.round(live.depth).toLocaleString()}`]);
+  // Depth of the ladder THIS order eats, which is the quote's own number.
+  //
+  // The panel used to compute it from `book.yes.asks` no matter what you were
+  // buying. Buying NO consumes the NO asks, so on a 1c/99c market the figure
+  // shown belonged to a completely different ladder — that is how a ticket
+  // could read "book ran out" beside eight figures of visible depth.
+  const depth = quote?.visibleDepth ?? null;
+  if (depth != null) extras.push(['Visible depth', `P$${Math.round(depth).toLocaleString()}`]);
   if (pnl) extras.push(['Your balance', `P$${pnl.equity.toFixed(2)}`]);
   syncRows(n.extra, expanded ? extras : []);
+
+  paintStaleness();
 
   n.go.className = `go ${busy ? 'pending' : outcome === 'yes' ? 'y' : 'n'}`;
   n.go.disabled = busy || !quote;
@@ -976,8 +1011,19 @@ function resize(e: MouseEvent, card: HTMLElement): void {
 
 // ── data ────────────────────────────────────────────────────────────────────
 
+/**
+ * True while a book request is outstanding.
+ *
+ * Without this, a slow venue turned a 1s interval into a queue: the tick fires
+ * regardless of whether the last one came back, so a few 500ms responses in a
+ * row leave several requests in flight at once, which earns more rate limiting,
+ * which makes them slower still. Skipping a tick is free; piling on is not.
+ */
+let bookInFlight = false;
+
 async function refreshBook(): Promise<void> {
-  if (!meta || collapsed) return;
+  if (!meta || collapsed || bookInFlight) return;
+  bookInFlight = true;
   try {
     const { book } = await send<{
       book: { yes: { bids: [number, number][]; asks: [number, number][] } };
@@ -986,18 +1032,41 @@ async function refreshBook(): Promise<void> {
     const bid = book.yes.bids[0]?.[0] ?? null;
     const ask = book.yes.asks[0]?.[0] ?? null;
     const mid = bid != null && ask != null ? (bid + ask) / 2 : (bid ?? ask);
-    const depth = book.yes.asks.reduce((s, [p, q]) => s + (p * q) / 100, 0);
 
     live = {
       yes: mid,
       no: mid == null ? null : 100 - mid,
       spread: bid != null && ask != null ? ask - bid : null,
-      depth,
+      at: Date.now(),
+      misses: 0,
     };
     paint();
   } catch {
-    /* a dropped poll is not worth surfacing; the next tick retries */
+    // A single dropped poll is normal and not worth a word. A run of them is
+    // the thing that used to look like the extension had quietly died: the
+    // last good price stayed on screen forever with nothing to say it was old.
+    live.misses++;
+    paintStaleness();
+  } finally {
+    bookInFlight = false;
   }
+}
+
+/**
+ * Say so when the price on screen is not live any more.
+ *
+ * Deliberately not an error card. Nothing is broken — the venue is rate
+ * limiting us or the tab lost connectivity — and the number is still the last
+ * true one. It just stops pretending to be current.
+ */
+function paintStaleness(): void {
+  if (!n || collapsed) return;
+  const age = live.at == null ? Infinity : Date.now() - live.at;
+  const stale = live.misses >= 3 || age > STALE_AFTER_MS;
+  n.wrapEl.classList.toggle('stale', stale && live.at != null);
+  const secs = Number.isFinite(age) ? Math.round(age / 1000) : 0;
+  const msg = live.at == null ? 'Waiting for the first price…' : `Last price ${secs}s ago`;
+  if (n.stale.textContent !== msg) n.stale.textContent = msg;
 }
 
 async function refreshPnl(): Promise<void> {
@@ -1268,7 +1337,7 @@ async function sync(): Promise<void> {
   if (changed) {
     meta = next.meta;
     quote = null;
-    live = { yes: null, no: null, spread: null, depth: null };
+    live = { yes: null, no: null, spread: null, at: null, misses: 0 };
     try {
       watched = await send<boolean>({ type: 'WATCH_HAS', meta: next.meta });
     } catch {
@@ -1359,6 +1428,10 @@ function watchNav(): void {
     };
   }
   addEventListener('popstate', fire);
+  // Hyperliquid addresses an outcome market as /trade/#10250 — the coin is a
+  // URL FRAGMENT, so switching markets fires neither pushState nor popstate.
+  // Without this, the panel would keep showing the first market you opened.
+  addEventListener('hashchange', fire);
   new MutationObserver(fire).observe(document.body, { childList: true, subtree: false });
   addEventListener('visibilitychange', () => {
     if (!document.hidden) {
