@@ -46,13 +46,35 @@ npm install
 npm run pack
 ```
 
-That writes `release/paper-predictions-<version>.zip` *and* leaves an unpacked
-build in `apps/extension/dist`, which you can point **Load unpacked** at
-directly. Load the **`dist` folder**, not `apps/extension` — the source tree has
-no `manifest.json` on purpose, so it cannot be loaded by mistake.
+That produces two things:
 
-> If Chrome says *"Could not load manifest"*, the build did not finish and there
-> is no valid `dist/`. Read the terminal output rather than re-picking the folder.
+| | What it is | Use it for |
+|---|---|---|
+| `release/paper-predictions/` | a **folder**, ready to load | testing locally |
+| `release/paper-predictions-<version>.zip` | the same files zipped | sharing, Web Store |
+
+Point **Load unpacked** at the **folder**. It is already the right shape — no
+unzipping, no picking the right level.
+
+### If Chrome shows an error
+
+Nearly every install failure is one of four things, and Chrome reports all of
+them as the same unhelpful *"Manifest file is missing or unreadable"*:
+
+| What you selected | Why it fails |
+|---|---|
+| the `.zip` file | Load unpacked takes a folder, never an archive |
+| a folder *containing* the extension folder | `manifest.json` has to be directly inside what you pick |
+| `apps/extension` | the source tree has no `manifest.json` **on purpose**, so it can't be loaded by mistake |
+| a folder from a half-finished build | read the terminal output; there is no valid build to load |
+
+The folder you pick must have `manifest.json` sitting **directly inside it**.
+If you see `assets/`, `icons/`, `src/` and `manifest.json` when you open it,
+that is the one.
+
+> *"Could not load javascript 'src/content/index.js'"* means you picked the
+> source folder rather than a built one. Run `npm run pack` and use
+> `release/paper-predictions/`.
 
 Click the toolbar icon for the dashboard: **Book** (earnings, positions),
 **Watch**, **Record** (calibration + Readiness Check), **History**, **Settings**.

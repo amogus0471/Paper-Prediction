@@ -1,24 +1,34 @@
 /**
- * Zip `dist/` into a file a person can download and load without npm.
+ * Package the built extension two ways, because there are two situations.
+ *
+ *   release/paper-predictions/          <- a FOLDER. Point "Load unpacked" here.
+ *   release/paper-predictions-X.Y.Z.zip <- for sharing, and for the Web Store.
+ *
+ * The folder exists because "Load unpacked" wants a directory, and every way of
+ * getting one from a zip is a way to get it wrong: people select the .zip
+ * itself, or extract it into a wrapper folder and select the wrapper, and
+ * Chrome answers "Manifest file is missing or unreadable" for all of it. A
+ * folder that is already correct removes the step where it goes wrong.
  *
  *   node scripts/pack.mjs        (or: npm run pack --workspace @polyfill/extension)
  *
- * Written by hand rather than shelling out to `zip` or pulling in a dependency:
- * `zip` does not exist on a default Windows box, PowerShell's Compress-Archive
- * writes backslash separators that Chrome rejects, and a build tool that only
- * works on the maintainer's machine is not a build tool. Node has DEFLATE in
- * core, and the ZIP container is about sixty lines.
+ * The zip is written by hand rather than shelling out to `zip` or pulling in a
+ * dependency: `zip` does not exist on a default Windows box, PowerShell's
+ * Compress-Archive writes backslash separators that Chrome rejects, and a build
+ * tool that only works on the maintainer's machine is not a build tool. Node
+ * has DEFLATE in core, and the ZIP container is about sixty lines.
  *
  * Store-compatible on purpose: no top-level folder, manifest.json at the root.
  */
 import { deflateRawSync } from 'node:zlib';
-import { readFileSync, writeFileSync, readdirSync, statSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync, statSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = resolve(root, 'dist');
 const outDir = resolve(root, '../../release');
+const unpacked = resolve(outDir, 'paper-predictions');
 
 const manifest = JSON.parse(readFileSync(resolve(dist, 'manifest.json'), 'utf8'));
 const outFile = resolve(outDir, `paper-predictions-${manifest.version}.zip`);
@@ -117,7 +127,31 @@ end.writeUInt32LE(offset, 16);
 mkdirSync(outDir, { recursive: true });
 writeFileSync(outFile, Buffer.concat([...chunks, centralBuf, end]));
 
+// The ready-to-load folder. Rebuilt from scratch each time, so a file deleted
+// from the source cannot survive here and quietly keep working.
+rmSync(unpacked, { recursive: true, force: true });
+for (const abs of files) {
+  const rel = relative(dist, abs);
+  const dest = join(unpacked, rel);
+  mkdirSync(dirname(dest), { recursive: true });
+  writeFileSync(dest, readFileSync(abs));
+}
+
+// Prove the folder is loadable rather than assuming it. Chrome's error for any
+// of this is the same unhelpful "Manifest file is missing or unreadable".
+const check = JSON.parse(readFileSync(join(unpacked, 'manifest.json'), 'utf8'));
+const referenced = [
+  check.background.service_worker,
+  ...check.content_scripts.flatMap((c) => c.js),
+  ...Object.values(check.icons),
+];
+for (const rel of referenced) {
+  statSync(join(unpacked, rel)); // throws if the manifest points at nothing
+}
+
+const rel = (p) => relative(resolve(root, '../..'), p).split('\\').join('/');
 const kb = (n) => `${(n / 1024).toFixed(1)} KB`;
-console.log(`✓ ${relative(resolve(root, '../..'), outFile).split('\\').join('/')}`);
-console.log(`  ${files.length} files, ${kb(statSync(outFile).size)}`);
-console.log(`\nUnzip it, then: chrome://extensions → Developer mode → Load unpacked`);
+console.log(`✓ ${rel(unpacked)}/        ready to load (${files.length} files)`);
+console.log(`✓ ${rel(outFile)}   ${kb(statSync(outFile).size)}`);
+console.log(`\nchrome://extensions → Developer mode → Load unpacked → ${rel(unpacked)}`);
+console.log(`Pick the FOLDER itself. Not the .zip, and not the folder above it.`);
