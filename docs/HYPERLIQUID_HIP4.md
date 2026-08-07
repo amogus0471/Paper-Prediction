@@ -141,3 +141,45 @@ for the other two.
 Lute is a **social frontend on Polymarket**: same liquidity, same settlement,
 same oracle. Supporting it is URL detection that resolves to the Polymarket
 market we already handle, not a new adapter.
+
+---
+
+# Axiom, Lute — aggregator frontends
+
+**Correction to an earlier note in this file:** axiom.trade *does* have
+prediction markets, at `axiom.trade/predictions`. The check that said otherwise
+read `docs.axiom.trade`, which is stale and still lists only spot trading. The
+live product has Discover / Pulse / **Predictions** / Perpetuals in its nav.
+
+Axiom's own API is auth-gated (`api.axiom.trade/predictions` → 502 unauthenticated),
+but it does not need to be called. Market cards on Axiom carry a **"Polymarket"
+badge**: Axiom is an aggregating *frontend*, and the liquidity, order book,
+oracle and settlement are all Polymarket's. Lute.gg is the same pattern.
+
+That makes both nearly free to support, and makes them support they should have:
+prices must still come from Polymarket's CLOB book, because that is the only
+place the real ladder exists. Pricing off an aggregator's displayed number would
+reintroduce exactly the "chart scraping" problem — a last price is not a book,
+and you cannot walk depth through it.
+
+## What is needed to finish
+
+One example URL of a *single market* page on Axiom (not the listing page —
+`axiom.trade/predictions?chain=sol&...` is the feed). The per-market route
+determines the parse. Three shapes are plausible and they need different code:
+
+| Shape | Resolution |
+|---|---|
+| `/predictions/<polymarket-slug>` | reuse the Polymarket slug path directly — trivial |
+| `/predictions/<axiom-internal-id>` | needs a public id→slug endpoint, or it is not resolvable without auth |
+| `?market=<slug>` query param | trivial, same as the first |
+
+Add to `parseVenueUrl` in `apps/extension/src/lib/resolve.ts`, returning
+`{ venue: 'polymarket', slug }` so the existing adapter handles it unchanged,
+then add the host to `manifest.config.json` under both `host_permissions` and
+`content_scripts.matches`.
+
+Deliberately NOT added blind: a content script that matches a host but never
+resolves a market is dead weight on every page load of that host, and a URL
+guess that resolves to the WRONG market is the failure mode already fixed once
+on Kalshi.
