@@ -43,9 +43,16 @@ export function parseVenueUrl(
 
   if (u.hostname.endsWith('kalshi.com')) {
     // /markets/<series>/<subtitle>[/<event-ticker>]
+    //
+    // Only the FIRST segment is reliably a ticker. The later ones are
+    // human-readable slugs ("bitcoin-above"), and treating one as an event
+    // ticker sends /events/bitcoin-above, which 404s — that is why the popup
+    // never appeared on Kalshi. An event ticker always looks like
+    // SERIES-SUFFIX in caps, so only accept a segment that matches that.
     if (parts[0] === 'markets' && parts[1]) {
-      const ticker = parts[3] ?? parts[2];
-      return { venue: 'kalshi', series: parts[1].toUpperCase(), ticker };
+      const series = parts[1].toUpperCase();
+      const candidate = [parts[3], parts[2]].find((p) => p && /^[A-Za-z0-9]+-[A-Za-z0-9]+/.test(p) && p === p.toUpperCase());
+      return { venue: 'kalshi', series, ...(candidate ? { ticker: candidate } : {}) };
     }
     return null;
   }
@@ -100,18 +107,33 @@ export async function resolveUrl(url: string): Promise<ResolvedMarket | null> {
     };
   }
 
-  // Kalshi: the URL carries an event ticker; ask the API for its markets.
-  const ticker = parsed.ticker ?? parsed.series;
-  const res = await fetch(
-    `https://api.elections.kalshi.com/trade-api/v2/events/${encodeURIComponent(ticker)}?with_nested_markets=true`,
-  );
-  if (!res.ok) return null;
-  const payload = (await res.json()) as { event?: unknown };
-  if (!payload.event) return null;
+  // Kalshi: resolve by event ticker when the URL actually carried one,
+  // otherwise fall back to the series and take its soonest open event — which
+  // is what the page itself shows for a rolling series like hourly BTC.
+  const K = 'https://api.elections.kalshi.com/trade-api/v2';
+  let event: unknown = null;
+
+  if (parsed.ticker) {
+    const res = await fetch(`${K}/events/${encodeURIComponent(parsed.ticker)}?with_nested_markets=true`);
+    if (res.ok) event = ((await res.json()) as { event?: unknown }).event ?? null;
+  }
+
+  if (!event) {
+    const res = await fetch(
+      `${K}/events?series_ticker=${encodeURIComponent(parsed.series)}&status=open&with_nested_markets=true&limit=10`,
+    );
+    if (!res.ok) return null;
+    const { events } = (await res.json()) as { events?: { markets?: unknown[] }[] };
+    // Soonest event with tradeable markets. A series page lists many; the one
+    // a user means is the one currently open.
+    event = (events ?? []).find((e) => (e.markets?.length ?? 0) > 0) ?? null;
+  }
+
+  if (!event) return null;
 
   const normalized = (kalshi as unknown as {
     normalizeEvent(e: unknown): { category: string; markets: NormalizedMarket[] };
-  }).normalizeEvent(payload.event);
+  }).normalizeEvent(event);
 
   const tradeable = normalized.markets.filter((m) => m.status === 'open');
   if (tradeable.length === 0) return null;

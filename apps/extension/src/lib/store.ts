@@ -112,6 +112,9 @@ export interface Settings {
   overlayEnabled: boolean;
   overlayPosition: { x: number; y: number } | null;
   sizeMode: 'dollars' | 'contracts';
+  /** The four one-tap amounts on the popup. Fully user-editable. */
+  quickAmounts: number[];
+  confettiEnabled: boolean;
   competeOptIn: boolean;
   deviceKey: string | null;
   handle: string | null;
@@ -150,6 +153,8 @@ export const DEFAULT_SETTINGS: Settings = {
   overlayEnabled: true,
   overlayPosition: null,
   sizeMode: 'dollars',
+  quickAmounts: [25, 50, 100, 250],
+  confettiEnabled: true,
   competeOptIn: false,
   deviceKey: null,
   handle: null,

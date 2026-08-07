@@ -14,20 +14,40 @@ import { buildQuote, submitOrder, markPositions, settleLocal, OrderError } from 
 import { fetchBook, resolveUrl, searchMarkets, trending } from '../lib/resolve';
 import { loadState, mutate, freshState, saveState, marketKey } from '../lib/store';
 import { buildRecord } from '../lib/record';
-import { dueForRefresh, metaOf, noteMid, toggleWatch } from '../lib/watchlist';
+import { dueForRefresh, isWatched, metaOf, noteMid, toggleWatch } from '../lib/watchlist';
 import type { Request, Response } from '../lib/messages';
 import { REALISM, midPrice } from '@polyfill/core';
 
 chrome.runtime.onInstalled.addListener(async () => {
   // Touch the store so a fresh install has a portfolio before the first render.
   await loadState();
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => undefined);
+  // The dashboard is a full tab, not a side panel: it shows an equity curve, a
+  // calibration chart and a ladder, none of which fit a 320px rail.
   // Settlement sweep. Cheap: it only looks at markets the user actually holds.
   chrome.alarms.create('settle-check', { periodInMinutes: 5 });
 });
 
 chrome.runtime.onStartup.addListener(() => {
   chrome.alarms.create('settle-check', { periodInMinutes: 5 });
+});
+
+const DASHBOARD = 'src/sidepanel/index.html';
+
+/**
+ * Toolbar click opens the dashboard.
+ *
+ * Focuses an existing dashboard tab rather than piling up duplicates — clicking
+ * the icon twice should take you to the thing, not open a second copy of it.
+ */
+chrome.action.onClicked.addListener(async () => {
+  const url = chrome.runtime.getURL(DASHBOARD);
+  const [existing] = await chrome.tabs.query({ url });
+  if (existing?.id != null) {
+    await chrome.tabs.update(existing.id, { active: true });
+    if (existing.windowId != null) await chrome.windows.update(existing.windowId, { focused: true });
+    return;
+  }
+  await chrome.tabs.create({ url });
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -137,6 +157,9 @@ async function handle(req: Request): Promise<unknown> {
 
     case 'TOGGLE_WATCH':
       return { watched: await toggleWatch(req.meta, req.mid) };
+
+    case 'WATCH_HAS':
+      return isWatched(await loadState(), req.meta.venue, req.meta.venueMarketId);
 
     case 'REFRESH_WATCHLIST':
       return refreshWatchlist();

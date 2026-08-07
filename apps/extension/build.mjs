@@ -123,6 +123,9 @@ const PERMISSION_FOR = {
   sidePanel: 'sidePanel',
   alarms: 'alarms',
   notifications: 'notifications',
+  tabs: null,     // querying/creating tabs by extension URL needs no permission
+  windows: null,
+  action: null,   // granted by the manifest "action" key, not a permission
   // Always available; no permission required.
   runtime: null,
   i18n: null,
@@ -163,7 +166,6 @@ const PERMISSION_FOR = {
 const manifest = JSON.parse(readFileSync(resolve(dist, 'manifest.json'), 'utf8'));
 for (const path of [
   manifest.background.service_worker,
-  manifest.side_panel.default_path,
   ...manifest.content_scripts.flatMap((c) => c.js),
   ...Object.values(manifest.icons),
 ]) {

@@ -620,10 +620,37 @@ function SettingsView({ state, onChange }: { state: LocalState; onChange: () => 
           checked={state.settings.confirmBeforeOrder}
           onChange={(v) => void set({ confirmBeforeOrder: v })}
         />
+        <label className="field" style={{ marginTop: 11 }}>
+          <span className="lbl">Quick-buy buttons</span>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {state.settings.quickAmounts.map((v, i) => (
+              <input
+                key={i}
+                type="number"
+                min={1}
+                value={v}
+                onChange={(e) => {
+                  const next = [...state.settings.quickAmounts];
+                  next[i] = Math.max(1, Number(e.target.value) || 1);
+                  void set({ quickAmounts: next });
+                }}
+              />
+            ))}
+          </div>
+        </label>
+        <div className="note">
+          These are the four one-tap amounts on the market popup.
+        </div>
       </div>
 
       <div className="card">
         <h3>Sound</h3>
+        <Toggle
+          label="Confetti on a fill"
+          desc="A short celebration when an order fills. Respects reduced-motion."
+          checked={state.settings.confettiEnabled}
+          onChange={(v) => void set({ confettiEnabled: v })}
+        />
         <Toggle
           label="Order sounds"
           desc="A rising tone on a fill, a falling one on a rejection — so you can tell them apart without looking."

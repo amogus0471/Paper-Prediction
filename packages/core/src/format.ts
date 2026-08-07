@@ -152,3 +152,51 @@ export const REJECT_COPY: Record<string, string> = {
 export function rejectCopy(code: string, detail?: string): string {
   return detail || REJECT_COPY[code] || 'Order rejected.';
 }
+
+/**
+ * Turn any failure into something a person can act on.
+ *
+ * Users should never see a code like `size_exceeds_depth`, a stack, or the
+ * literal string "277s old" — those are for logs. Every message here says what
+ * happened and what to do about it, in that order, and never blames the user
+ * for something the app should have handled.
+ */
+export function friendlyError(code?: string, message?: string, detail?: string): string {
+  switch (code) {
+    case 'quote_expired':
+      return 'That price is out of date — grabbing a fresh one.';
+    case 'price_moved':
+      return "The price moved while your order was in flight. That's real trading — try again at the new price.";
+    case 'stale_book':
+      return "Lost the live prices for this market for a moment. They'll come back on their own.";
+    case 'size_exceeds_depth':
+      return "That's more than this market can absorb right now — try a smaller amount.";
+    case 'insufficient_funds':
+      return detail || "You don't have enough sim cash for that.";
+    case 'position_limit':
+      return 'That would put over 20% of your balance in one market. Try a smaller size.';
+    case 'below_min_size':
+      return 'That amount is below this market\u2019s minimum. Try a bit more.';
+    case 'no_liquidity':
+      return 'Nobody is offering that side right now. Try the other side, or come back shortly.';
+    case 'resolution_lockout':
+      return 'This one is already decided — the price says so. Pick a market that is still a real question.';
+    case 'insufficient_position':
+      return "You don't hold enough of this to sell.";
+    case 'rate_limited':
+      return 'Slow down a moment — that was a lot of orders very quickly.';
+    case 'market_closed':
+      return 'This market has closed.';
+    case 'offline':
+      return 'Could not reach the network. Check your connection.';
+    default:
+      break;
+  }
+
+  // Anything unmapped: keep a readable sentence, never a code or a stack.
+  const clean = (message ?? '').trim();
+  if (!clean || /^[a-z_]+$/.test(clean) || clean.length > 160) {
+    return 'Something went wrong with that order. Nothing was charged — try again.';
+  }
+  return clean;
+}
