@@ -22,6 +22,7 @@ import { fetchBook, resolveUrl, searchMarkets, trending } from '../lib/resolve';
 import { loadState, mutate, freshState, saveState, marketKey, summarize } from '../lib/store';
 import { buildRecord } from '../lib/record';
 import { dueForRefresh, isWatched, metaOf, noteMid, toggleWatch } from '../lib/watchlist';
+import { evaluateAlerts } from '../lib/alerts';
 import type { Request, Response } from '../lib/messages';
 import { REALISM, midPrice } from '@polyfill/core';
 
@@ -275,8 +276,12 @@ async function handle(req: Request): Promise<unknown> {
     case 'WATCH_HAS':
       return isWatched(await loadState(), req.meta.venue, req.meta.venueMarketId);
 
-    case 'REFRESH_WATCHLIST':
-      return refreshWatchlist();
+    case 'REFRESH_WATCHLIST': {
+      const r = await refreshWatchlist();
+      // Alerts ride the refresh that already happened — no extra polling.
+      await evaluateAlerts();
+      return r;
+    }
 
     case 'GET_RECORD':
       return buildRecord(await loadState());

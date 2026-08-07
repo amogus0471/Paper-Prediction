@@ -149,6 +149,8 @@ export interface Settings {
    * browsing others.
    */
   pinnedMarket: { meta: unknown; url: string } | null;
+  /** Set once the alerts walkthrough has been completed or skipped. */
+  onboardedAt: string | null;
   /**
    * Enforce the 5%-of-visible-depth cap.
    *
@@ -194,6 +196,8 @@ export interface LocalState {
    * is precisely why ladder links are minted server-side instead.
    */
   chain: ChainLink[];
+  /** Armed market alerts. Evaluated locally on the watchlist refresh. */
+  alerts?: import('./alerts').MarketAlert[];
   settings: Settings;
 }
 
@@ -213,6 +217,7 @@ export const DEFAULT_SETTINGS: Settings = {
   doubleTapToPlace: false,
   turboMode: false,
   pinnedMarket: null,
+  onboardedAt: null,
   enforceDepthCap: false,
   resolutionLockout: false,
   quickMode: 'dollars',
@@ -245,6 +250,7 @@ export function freshState(): LocalState {
       },
     ],
     chain: [],
+    alerts: [],
     settings: { ...DEFAULT_SETTINGS },
   };
 }
@@ -272,6 +278,7 @@ export async function loadState(): Promise<LocalState> {
   stored.settings = { ...DEFAULT_SETTINGS, ...stored.settings };
   stored.watchlist ??= [];
   stored.chain ??= [];
+  stored.alerts ??= [];
   return stored;
 }
 

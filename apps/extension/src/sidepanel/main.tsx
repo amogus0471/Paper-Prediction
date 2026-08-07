@@ -22,6 +22,8 @@ import {
   type StoredPosition,
 } from '../lib/store';
 import { Leaderboard } from './Leaderboard';
+import { Onboarding } from './Onboarding';
+import { ALERT_LABELS, addAlert, alertsFor, describeAlert, removeAlert, type AlertKind } from '../lib/alerts';
 import './styles.css';
 
 type Tab = 'book' | 'watch' | 'ladder' | 'record' | 'history' | 'settings';
@@ -79,6 +81,18 @@ function App() {
   }
 
   const s = summarize(state);
+
+  // Shown once. Deliberately not a modal over the app: a first-run tour you
+  // cannot leave is worse than no tour.
+  if (!state.settings.onboardedAt) {
+    return (
+      <div className="app">
+        <main>
+          <Onboarding state={state} onDone={refresh} />
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="app">
@@ -156,8 +170,8 @@ function Book({ state, record }: { state: LocalState; record: LocalRecord }) {
   const curve = [...state.transactions].reverse().map((t) => t.balanceAfter);
 
   return (
-    <>
-      <div className="card">
+    <div className="dash">
+      <div className="card span">
         <h3>Earnings</h3>
         <Sparkline points={curve.length > 1 ? curve : [state.startingBalance, state.cash]} />
         <Row k="Realized P&L" v={formatSignedSimDollars(s.realized)} tone={s.realized} />
@@ -205,7 +219,7 @@ function Book({ state, record }: { state: LocalState; record: LocalRecord }) {
       ) : (
         open.map((p) => <PositionCard key={p.marketKey + p.outcome} p={p} />)
       )}
-    </>
+    </div>
   );
 }
 
@@ -336,6 +350,7 @@ function Watch({ state, onChange }: { state: LocalState; onChange: () => void })
           open={open === w.marketKey}
           onToggle={() => setOpen(open === w.marketKey ? null : w.marketKey)}
           onUnstar={() => void unstar(w)}
+          onChange={onChange}
         />
       ))}
     </>
@@ -368,12 +383,14 @@ function WatchRow({
   open,
   onToggle,
   onUnstar,
+  onChange,
 }: {
   w: LocalState['watchlist'][number];
   state: LocalState;
   open: boolean;
   onToggle: () => void;
   onUnstar: () => void;
+  onChange: () => void;
 }) {
   const mid = w.lastMid;
   const prev = w.prevMid ?? null;
@@ -395,7 +412,7 @@ function WatchRow({
       <div className="wbody">
         <div>
           <div className="winner">
-            {history.length > 2 && <MiniSpark points={history} />}
+            {history.length > 2 && <HoverChart points={history} />}
             <div className="wgrid">
               <div className="wstat">
                 <div className="k">Yes</div>
@@ -428,6 +445,8 @@ function WatchRow({
                 </div>
               )}
             </div>
+            <AlertPanel w={w} state={state} onChange={onChange} />
+
             <div className="wactions">
               <button onClick={() => void send({ type: 'OPEN_MARKET', url: marketUrl(w) })}>
                 Open market ↗
@@ -1033,5 +1052,125 @@ function DeviceKeyReveal({ deviceKey }: { deviceKey: string | null }) {
         history unless you paste this key into the new install. There is no password reset.
       </div>
     </>
+  );
+}
+
+/**
+ * Watchlist price chart with a hover readout.
+ *
+ * Follows the pointer with a crosshair and a tooltip, the way the venues' own
+ * charts do — reading a bare sparkline gives you a shape but never a number.
+ * Pure SVG: no charting dependency for 68px of line.
+ */
+function HoverChart({ points }: { points: number[] }) {
+  const [at, setAt] = useState<number | null>(null);
+  const w = 300;
+  const h = 68;
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const span = max - min || 1;
+
+  const x = (i: number) => (i / Math.max(1, points.length - 1)) * w;
+  const y = (v: number) => h - ((v - min) / span) * (h - 10) - 5;
+
+  const line = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(p).toFixed(1)}`).join(' ');
+  const area = `${line} L${w},${h} L0,${h} Z`;
+  const up = points[points.length - 1]! >= points[0]!;
+  const stroke = up ? 'var(--yes)' : 'var(--no)';
+
+  const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    const box = e.currentTarget.getBoundingClientRect();
+    const rel = (e.clientX - box.left) / box.width;
+    setAt(Math.max(0, Math.min(points.length - 1, Math.round(rel * (points.length - 1)))));
+  };
+
+  const v = at == null ? null : points[at]!;
+
+  return (
+    <div className="wchart">
+      <svg
+        viewBox={`0 0 ${w} ${h}`}
+        preserveAspectRatio="none"
+        className="grab"
+        onMouseMove={onMove}
+        onMouseLeave={() => setAt(null)}
+      >
+        <defs>
+          <linearGradient id="wfill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={stroke} stopOpacity="0.22" />
+            <stop offset="100%" stopColor={stroke} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path d={area} fill="url(#wfill)" />
+        <path d={line} fill="none" stroke={stroke} strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
+        {at != null && v != null && (
+          <>
+            <line className="wcursor on" x1={x(at)} y1={0} x2={x(at)} y2={h} />
+            <circle className="wdot on" cx={x(at)} cy={y(v)} r={3.5} />
+          </>
+        )}
+      </svg>
+      {at != null && v != null && (
+        <div
+          className="wtip on"
+          style={{ left: `${(at / Math.max(1, points.length - 1)) * 100}%`, top: `${(y(v) / h) * 100}%` }}
+        >
+          {v.toFixed(1)}¢
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Alerts for one watched market.
+ *
+ * Two taps to arm one, and the thresholds are fixed rather than a form —
+ * a number input here would be a decision to make before getting any value.
+ */
+function AlertPanel({
+  w,
+  state,
+  onChange,
+}: {
+  w: LocalState['watchlist'][number];
+  state: LocalState;
+  onChange: () => void;
+}) {
+  const mine = alertsFor(state, w.marketKey);
+
+  const add = async (kind: AlertKind) => {
+    await addAlert(w, kind, kind === 'crosses' ? Math.round((w.lastMid ?? 50) / 10) * 10 : 20);
+    onChange();
+  };
+
+  return (
+    <div className="alerts">
+      {mine.map((a) => (
+        <div key={a.id} className={`alert-row ${a.firedAt ? 'fired' : ''}`}>
+          <span>{a.firedAt ? '✓' : '🔔'}</span>
+          <span>{describeAlert(a)}</span>
+          <button
+            className="x"
+            title="Remove alert"
+            onClick={async () => {
+              await removeAlert(a.id);
+              onChange();
+            }}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <div className="alert-add">
+        {(Object.keys(ALERT_LABELS) as AlertKind[])
+          .filter((k) => !mine.some((a) => a.kind === k && !a.firedAt))
+          .map((k) => (
+            <button key={k} onClick={() => void add(k)}>
+              + {ALERT_LABELS[k]}
+            </button>
+          ))}
+      </div>
+    </div>
   );
 }
