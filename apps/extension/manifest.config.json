@@ -1,45 +1,54 @@
 {
   "manifest_version": 3,
-  "name": "Polyfill — Paper Trade Prediction Markets",
+  "name": "Polyfill \u2014 Paper Trade Prediction Markets",
   "version": "0.2.0",
   "description": "Practise trading real Polymarket and Kalshi markets with simulated money. Fills price against the real order book. No real money, ever.",
   "minimum_chrome_version": "116",
-
-  "permissions": ["storage", "sidePanel", "alarms", "notifications"],
-
+  "permissions": [
+    "storage",
+    "sidePanel",
+    "alarms",
+    "notifications"
+  ],
   "host_permissions": [
     "https://gamma-api.polymarket.com/*",
     "https://clob.polymarket.com/*",
     "https://api.elections.kalshi.com/*"
   ],
-
   "background": {
     "service_worker": "src/background/index.js",
     "type": "module"
   },
-
   "side_panel": {
     "default_path": "src/sidepanel/index.html"
   },
-
   "action": {
-    "default_title": "Polyfill — open side panel"
+    "default_title": "Polyfill \u2014 open side panel",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   },
-
   "content_scripts": [
     {
-      "matches": ["https://polymarket.com/*", "https://kalshi.com/*"],
-      "js": ["src/content/index.js"],
+      "matches": [
+        "https://polymarket.com/*",
+        "https://kalshi.com/*"
+      ],
+      "js": [
+        "src/content/index.js"
+      ],
       "run_at": "document_idle"
     }
   ],
-
   "icons": {
     "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"
   }

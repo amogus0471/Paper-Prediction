@@ -75,7 +75,12 @@ for (const [name, entry, format] of [
 
 console.log('▸ manifest + icons');
 mkdirSync(dist, { recursive: true });
-copyFile(resolve(root, 'manifest.json'), resolve(dist, 'manifest.json'));
+// Read manifest.config.json and WRITE dist/manifest.json.
+// The source tree deliberately has no manifest.json: if it did, Chrome would
+// happily load apps/extension/ and then fail on "src/content/index.js" — a file
+// that only exists after a build — which reads as a broken extension rather
+// than as "you picked the wrong folder". No decoy, no confusion.
+copyFile(resolve(root, 'manifest.config.json'), resolve(dist, 'manifest.json'));
 copyDir(resolve(root, 'public/icons'), resolve(dist, 'icons'));
 
 // Vite stamps `crossorigin` on every emitted module script and stylesheet.
