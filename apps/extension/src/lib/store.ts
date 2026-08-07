@@ -150,6 +150,14 @@ export interface Settings {
    * they did not ask for; the ladder always enforces it regardless.
    */
   enforceDepthCap: boolean;
+  /**
+   * Freeze trading once a market is priced as a near-certainty.
+   *
+   * A game ends at 22:14 and the venue settles at 22:31; in between the price
+   * is 99c and the result is already public. Buying there is collecting, not
+   * forecasting, so the ladder always blocks it. Solo play does not have to.
+   */
+  resolutionLockout: boolean;
   /** Quick amounts as a % of bankroll rather than fixed dollars. */
   quickMode: 'dollars' | 'percent';
   quickPercents: number[];
@@ -197,6 +205,7 @@ export const DEFAULT_SETTINGS: Settings = {
   doubleTapToPlace: false,
   turboMode: false,
   enforceDepthCap: false,
+  resolutionLockout: false,
   quickMode: 'dollars',
   quickPercents: [1, 2, 5, 10],
   competeOptIn: false,

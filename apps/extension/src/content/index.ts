@@ -236,6 +236,7 @@ ${ODOMETER_CSS}
 .dd-search:focus { border-color: var(--blue); }
 .dd-list { max-height: 320px; }
 .dd-item .pc { font-size: 13px; font-weight: 700; }
+.dd-list { overscroll-behavior: contain; }
 .dd-list::-webkit-scrollbar { width: 7px; }
 .dd-list::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
 
@@ -301,7 +302,9 @@ ${ODOMETER_CSS}
 .egrip:hover::before { background: var(--blue2); }
 
 /* ── toasts ─────────────────────────────────────────────────────────────── */
-.toasts { position: absolute; z-index: 2147483601; display: grid; gap: 5px; }
+.toasts { position: absolute; z-index: 2147483601; display: grid; gap: 5px;
+  justify-items: center; }
+.toasts .toast { max-width: 100%; }
 .toast { display: flex; align-items: flex-start; gap: 7px; padding: 7px 10px;
   background: rgba(13,16,23,.98); backdrop-filter: blur(12px);
   border: 1px solid var(--line); border-radius: 10px;
@@ -366,8 +369,9 @@ function toast(text: string, kind: 'pending' | 'ok' | 'bad', ms = 2600): () => v
     // Inside .wrap, so messages sit directly under the popup and follow it
     // when dragged, instead of floating in the middle of someone else's page.
     toastHost.style.top = 'calc(100% + 7px)';
-    toastHost.style.left = '0';
-    toastHost.style.width = '100%';
+    toastHost.style.left = '50%';
+    toastHost.style.transform = 'translateX(-50%)';
+    toastHost.style.minWidth = '100%';
     (wrap ?? shadow).appendChild(toastHost);
   }
   const el = document.createElement('div');

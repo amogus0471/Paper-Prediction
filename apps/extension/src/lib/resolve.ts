@@ -14,7 +14,7 @@
  */
 
 import { KalshiAdapter, PolymarketAdapter } from '@polyfill/venues';
-import type { NormalizedMarket } from '@polyfill/venues';
+import type { BookRef, NormalizedMarket } from '@polyfill/venues';
 import type { MarketMeta } from './engine';
 
 export interface ResolvedMarket {
@@ -127,6 +127,7 @@ function toMeta(m: NormalizedMarket, category: string): MarketMeta {
     closeTime: m.closeTime?.toISOString(),
     ...(m.slug ? { slug: m.slug } : {}),
     ...(m.imageUrl ? { imageUrl: m.imageUrl } : {}),
+    bookRef: m.bookRef,
     category,
   };
 }
@@ -213,18 +214,50 @@ export async function resolveUrl(url: string): Promise<ResolvedMarket | null> {
 }
 
 /** Fetch a live book for a market the overlay already resolved. */
-export async function fetchBook(meta: MarketMeta) {
-  const adapter = meta.venue === 'polymarket' ? polymarket : kalshi;
+/**
+ * Book references, cached for the life of the service worker.
+ *
+ * A market's token pair never changes, so looking it up more than once is pure
+ * latency. This is what makes a 1s poll affordable: one request per refresh
+ * instead of a metadata round trip plus the book.
+ */
+const bookRefCache = new Map<string, BookRef>();
+
+async function resolveBookRef(meta: MarketMeta): Promise<BookRef> {
+  const key = `${meta.venue}:${meta.venueMarketId}`;
+
+  // Carried through from resolveUrl in the common case — no network at all.
+  if (meta.bookRef) {
+    bookRefCache.set(key, meta.bookRef as BookRef);
+    return meta.bookRef as BookRef;
+  }
+
+  const cached = bookRefCache.get(key);
+  if (cached) return cached;
+
+  // Kalshi addresses books by ticker, so it needs no lookup either.
+  if (meta.venue === 'kalshi') {
+    const ref = { venue: 'kalshi' as const, ticker: meta.venueMarketId };
+    bookRefCache.set(key, ref);
+    return ref;
+  }
+
+  // Polymarket alone needs its ERC-1155 token pair fetched. Once, ever.
+  const adapter = polymarket;
   const markets = await adapter.getMarkets([meta.venueMarketId]);
-  const fresh = markets[0];
-  const ref = fresh?.bookRef ?? bookRefFor(meta);
-  const book = await adapter.getOrderBook(ref);
-  return { book, meta: fresh ? toMeta(fresh, meta.category ?? 'other') : meta };
+  const ref = markets[0]?.bookRef;
+  if (!ref) {
+    throw new Error('Could not find this market on the venue.');
+  }
+  bookRefCache.set(key, ref);
+  return ref;
 }
 
-function bookRefFor(meta: MarketMeta) {
-  if (meta.venue === 'kalshi') return { venue: 'kalshi' as const, ticker: meta.venueMarketId };
-  throw new Error('Polymarket needs a token pair; refetch the market first.');
+export async function fetchBook(meta: MarketMeta) {
+  const adapter = meta.venue === 'polymarket' ? polymarket : kalshi;
+  const ref = await resolveBookRef(meta);
+  const book = await adapter.getOrderBook(ref);
+  return { book, meta };
 }
 
 /** Trending markets for the side panel's browse view. Nothing is persisted. */

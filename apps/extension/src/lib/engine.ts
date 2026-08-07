@@ -88,6 +88,16 @@ export interface MarketMeta {
   category?: string;
   /** Venue artwork, when the venue supplies any. Optional by design. */
   imageUrl?: string;
+  /**
+   * Everything the adapter needs to fetch this market's book again.
+   *
+   * Carried from the initial resolve so polling never has to re-look-up
+   * metadata. Without it every refresh cost a `getMarkets` round trip on top
+   * of the book itself — three to four sequential requests per second, which
+   * rate-limited the venue, made `getMarkets` return nothing, and froze prices
+   * permanently behind a silent catch.
+   */
+  bookRef?: unknown;
   /** Venue slug, kept for deep-linking back to the market page. */
   slug?: string;
 }
@@ -136,15 +146,16 @@ function ladderFor(book: NormalizedBook, outcome: OutcomeSide): Ladder {
  * 22:31; in between the price is 99c and the result is already public. Buying
  * there is collecting, not forecasting.
  */
-function assertNotResolved(ladder: Ladder): void {
+function assertNotResolved(ladder: Ladder, enabled = true): void {
+  if (!enabled) return;
   const bid = ladder.bids[0]?.[0] ?? null;
   const ask = ladder.asks[0]?.[0] ?? null;
   if (bid == null || ask == null) return;
   if (ask - bid < 2 && (bid >= 97 || ask <= 3)) {
     throw new OrderError(
       'resolution_lockout',
-      'This market is already priced as a near-certainty.',
-      'Trading it now would be front-running the result, not forecasting it.',
+      `This market is already decided — it is trading at ${Math.max(bid, 100 - ask).toFixed(0)}¢.`,
+      'The outcome is public but the venue has not settled yet, so buying here collects rather than forecasts. Turn off "Freeze decided markets" in Settings to trade it anyway.',
     );
   }
 }
@@ -158,6 +169,8 @@ export interface PriceOpts {
   realism: SimRealism;
   target: { kind: 'qty'; qty: number } | { kind: 'notional'; usd: number };
   enforceDepthCap?: boolean;
+  /** Off lets you trade a market the price already treats as decided. */
+  resolutionLockout?: boolean;
 }
 
 export function priceOrder(opts: PriceOpts) {
@@ -182,7 +195,7 @@ export function priceOrder(opts: PriceOpts) {
     }
   }
 
-  assertNotResolved(ladder);
+  assertNotResolved(ladder, opts.resolutionLockout !== false);
 
   // A book whose mirror invariants fail means the adapter mis-parsed the venue
   // payload. Refusing to price is the only safe response.
@@ -355,7 +368,11 @@ export async function submitOrder(opts: SubmitOpts): Promise<StoredOrder> {
         quote.side === 'sell'
           ? { kind: 'qty', qty: quote.qty }
           : { kind: 'notional', usd: quote.cost },
-      enforceDepthCap: quote.side === 'buy',
+      // Must mirror the quote exactly. Hardcoding these meant a quote could
+      // succeed and the fill be refused a moment later on the same settings —
+      // the user sees a price, presses buy, and is told no.
+      enforceDepthCap: state.settings.enforceDepthCap && quote.side === 'buy',
+      resolutionLockout: state.settings.resolutionLockout,
     });
 
     if (priceMovedAgainstUser(quote.avgPrice, priced.walk.avgPrice, quote.side)) {

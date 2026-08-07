@@ -807,6 +807,24 @@ function SettingsView({ state, onChange }: { state: LocalState; onChange: () => 
           onChange={(v) => void set({ keyboardTrading: v })}
         />
         <Toggle
+          label="Freeze decided markets"
+          desc="Blocks trading once a market is priced at 97c or above (or 3c and below) with a tight spread. At that point the outcome is public and the venue simply has not settled yet, so buying collects rather than forecasts. The ladder always enforces this regardless."
+          checked={state.settings.resolutionLockout}
+          onChange={(v) => void set({ resolutionLockout: v })}
+        />
+        <Toggle
+          label="Cap orders at 5% of visible depth"
+          desc="Refuses an order larger than the book can absorb. Off, you fill against whatever depth exists and eat the bad average - which is the honest outcome, just an expensive lesson."
+          checked={state.settings.enforceDepthCap}
+          onChange={(v) => void set({ enforceDepthCap: v })}
+        />
+        <Toggle
+          label="Double-tap to place"
+          desc="Press Y or N twice within 400ms to place the order, instead of reaching for Enter."
+          checked={state.settings.doubleTapToPlace}
+          onChange={(v) => void set({ doubleTapToPlace: v })}
+        />
+        <Toggle
           label="Turbo open"
           desc="Opening a market reuses a tab already on that venue instead of paying for a cold page load. Only ever reuses a tab already on Polymarket or Kalshi."
           checked={state.settings.turboMode}

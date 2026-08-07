@@ -175,11 +175,12 @@ async function handle(req: Request): Promise<unknown> {
         side: req.side,
         outcome: req.outcome,
         realism: state.settings.realism,
+        enforceDepthCap: state.settings.enforceDepthCap && req.side === 'buy',
+        resolutionLockout: state.settings.resolutionLockout,
         target:
           req.qty != null && req.qty > 0
             ? { kind: 'qty', qty: req.qty }
             : { kind: 'notional', usd: req.notional ?? state.settings.defaultOrderSize },
-        enforceDepthCap: req.side === 'buy',
       });
       return quote;
     }
