@@ -1,0 +1,33 @@
+node_modules/
+dist/
+build/
+coverage/
+.turbo/
+*.tsbuildinfo
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+supabase/.temp/
+
+# Extension packaging
+apps/extension/*.zip
+apps/extension/.crx-key.pem
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+
+# Local fixtures captured from live APIs (large, regenerate with npm run invariants)
+scripts/.fixtures-live/
+
+# Built extension — regenerate with: npm run build --workspace @ghostfill/extension
+apps/extension/dist/

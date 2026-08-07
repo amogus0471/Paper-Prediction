@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "Ghostfill — Paper Trade Prediction Markets",
+  "version": "0.1.0",
+  "description": "Practise trading real Polymarket and Kalshi markets with simulated money. No real money, ever.",
+  "minimum_chrome_version": "116",
+
+  "permissions": ["storage", "sidePanel", "alarms"],
+
+  "host_permissions": [
+    "https://gamma-api.polymarket.com/*",
+    "https://clob.polymarket.com/*",
+    "https://api.elections.kalshi.com/*"
+  ],
+
+  "background": {
+    "service_worker": "src/background/index.js",
+    "type": "module"
+  },
+
+  "side_panel": {
+    "default_path": "src/sidepanel/index.html"
+  },
+
+  "action": {
+    "default_title": "Ghostfill — open side panel"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["https://polymarket.com/*", "https://kalshi.com/*"],
+      "js": ["src/content/index.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "ghostfill",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Paper trade real prediction markets. Server-authoritative ghost fills against live order books.",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "check:secrets": "node scripts/check-secrets.mjs",
+    "invariants": "npm run test --workspace @ghostfill/venues -- test/live-invariants.test.ts",
+    "build:edge": "node scripts/build-edge-shared.mjs",
+    "build:functions": "node scripts/build-functions.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@vitest/coverage-v8": "^2.1.8",
+    "esbuild": "^0.28.1",
+    "fast-check": "^3.23.2",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
