@@ -8,7 +8,7 @@
 // market that never resolved is not a forecast you got wrong.
 
 import { handler, json, requireCronSecret } from '../_shared/api.ts';
-import { createAdapters } from '../_shared/ghostfill.js';
+import { createAdapters } from '../_shared/polyfill.js';
 
 Deno.serve(
   handler('settle', async (req, body, db) => {

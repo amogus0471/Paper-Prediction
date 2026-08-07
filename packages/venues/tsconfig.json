@@ -4,7 +4,7 @@
     "noEmit": true,
     "types": ["node"],
     "paths": {
-      "@ghostfill/core": ["../core/src/index.ts"]
+      "@polyfill/core": ["../core/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts", "test/**/*.ts"]

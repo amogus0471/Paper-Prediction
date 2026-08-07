@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "Ghostfill — Paper Trade Prediction Markets",
-  "version": "0.1.0",
-  "description": "Practise trading real Polymarket and Kalshi markets with simulated money. No real money, ever.",
+  "name": "Polyfill — Paper Trade Prediction Markets",
+  "version": "0.2.0",
+  "description": "Practise trading real Polymarket and Kalshi markets with simulated money. Fills price against the real order book. No real money, ever.",
   "minimum_chrome_version": "116",
 
-  "permissions": ["storage", "sidePanel", "alarms"],
+  "permissions": ["storage", "sidePanel", "alarms", "notifications"],
 
   "host_permissions": [
     "https://gamma-api.polymarket.com/*",
@@ -23,7 +23,7 @@
   },
 
   "action": {
-    "default_title": "Ghostfill — open side panel"
+    "default_title": "Polyfill — open side panel"
   },
 
   "content_scripts": [

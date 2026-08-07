@@ -1,5 +1,5 @@
 /**
- * Ghost Mode overlay.
+ * The Polyfill trading overlay.
  *
  * Safety rules, all non-negotiable because this runs on somebody else's site:
  *   - Exactly ONE node appended to document.body. The host DOM is never mutated.
@@ -17,7 +17,7 @@ import type { MarketMeta, QuoteResult } from '../lib/engine';
 import type { ResolvedMarket } from '../lib/resolve';
 import type { Settings } from '../lib/store';
 
-const HOST_ID = 'ghostfill-root';
+const HOST_ID = 'polyfill-root';
 
 let shadow: ShadowRoot | null = null;
 let root: HTMLDivElement | null = null;
@@ -33,6 +33,7 @@ let busy = false;
 let statusLine = '';
 let statusKind: 'ok' | 'error' | 'info' = 'info';
 let quoteTimer: number | undefined;
+let watched = false;
 
 const STYLE = `
 :host { all: initial; }
@@ -55,6 +56,7 @@ const STYLE = `
 .iconbtn { background: none; border: none; color: #7A8290; cursor: pointer;
   font-size: 15px; line-height: 1; padding: 2px 4px; border-radius: 4px; }
 .iconbtn:hover { color: #E8EAED; background: #232830; }
+.iconbtn.on { color: #8B5CF6; }
 .body { padding: 10px; display: grid; gap: 9px; }
 .q { font-size: 12px; color: #E8EAED; font-weight: 600; }
 .meta { display: flex; gap: 8px; align-items: center; font-size: 10px; color: #7A8290; }
@@ -159,13 +161,13 @@ function render(): void {
   if (!resolved || !activeMeta) {
     root.innerHTML = h(`
       <div class="bar">
-        <span class="brand">GHOSTFILL</span>
+        <span class="brand">POLYFILL</span>
         <span class="sim">SIM · NO REAL MONEY</span>
         <span class="spacer"></span>
         <button class="iconbtn" data-act="close">×</button>
       </div>
       <div class="body">
-        <div class="status info">Open a market page to trade it with ghost money.</div>
+        <div class="status info">Open a market page to trade it with simulated money.</div>
       </div>`);
     wire();
     return;
@@ -191,10 +193,10 @@ function render(): void {
         <div class="tr"><span>Avg fill</span><span>${quote.avgPrice.toFixed(1)}¢</span></div>
         <div class="tr"><span>${unit}</span><span>${quote.qty.toLocaleString()}</span></div>
         <div class="tr"><span>Slippage</span><span class="${quote.slippageBps > 50 ? 'warn' : ''}">${Math.round(quote.slippageBps)} bps</span></div>
-        ${quote.fee > 0 ? `<div class="tr"><span>Fee</span><span>G$${quote.fee.toFixed(2)}</span></div>` : ''}
-        <div class="tr"><span>Cost</span><span>G$${quote.totalCost.toFixed(2)}</span></div>
-        <div class="tr"><span>Max payout</span><span>G$${quote.maxPayout.toFixed(2)}</span></div>
-        <div class="tr hl"><span>Max profit</span><span>+G$${quote.maxProfit.toFixed(2)}</span></div>
+        ${quote.fee > 0 ? `<div class="tr"><span>Fee</span><span>P$${quote.fee.toFixed(2)}</span></div>` : ''}
+        <div class="tr"><span>Cost</span><span>P$${quote.totalCost.toFixed(2)}</span></div>
+        <div class="tr"><span>Max payout</span><span>P$${quote.maxPayout.toFixed(2)}</span></div>
+        <div class="tr hl"><span>Max profit</span><span>+P$${quote.maxProfit.toFixed(2)}</span></div>
         <div class="tr"><span>Breakeven</span><span>${quote.breakeven.toFixed(1)}¢</span></div>
         ${quote.partial ? `<div class="tr"><span class="warn">Partial</span><span class="warn">book ran out</span></div>` : ''}
       </div>`
@@ -202,9 +204,10 @@ function render(): void {
 
   root.innerHTML = h(`
     <div class="bar">
-      <span class="brand">GHOSTFILL</span>
+      <span class="brand">POLYFILL</span>
       <span class="sim">SIM · NO REAL MONEY</span>
       <span class="spacer"></span>
+      <button class="iconbtn ${watched ? 'on' : ''}" data-act="star" title="${watched ? 'Unstar' : 'Add to watchlist'}">${watched ? '★' : '☆'}</button>
       <button class="iconbtn" data-act="toggle">${collapsed ? '▴' : '▾'}</button>
       <button class="iconbtn" data-act="close">×</button>
     </div>
@@ -235,7 +238,7 @@ function render(): void {
       ${ticket}
       ${statusLine ? `<div class="status ${statusKind}">${esc(statusLine)}</div>` : ''}
       <button class="place ${outcome}" data-act="place" ${busy || !quote ? 'disabled' : ''}>
-        ${busy ? 'Placing…' : `Ghost ${side === 'buy' ? 'Buy' : 'Sell'} ${outcome.toUpperCase()}`}
+        ${busy ? 'Placing…' : `${side === 'buy' ? 'Buy' : 'Sell'} ${outcome.toUpperCase()}`}
       </button>
       <div class="foot">Simulated fills against the real book. No real money is involved.</div>
     </div>`);
@@ -250,6 +253,22 @@ function wire(): void {
     const act = (el as HTMLElement).dataset.act;
 
     if (act === 'close') el.addEventListener('click', teardown);
+    if (act === 'star')
+      el.addEventListener('click', async () => {
+        if (!activeMeta) return;
+        try {
+          const { watched: now } = await send<{ watched: boolean }>({
+            type: 'TOGGLE_WATCH',
+            meta: activeMeta,
+            mid: quote?.bookMid ?? null,
+          });
+          watched = now;
+          playSound('tick', settings?.soundVolume ?? 0.35, settings?.soundEnabled ?? true);
+          render();
+        } catch {
+          // Starring is a convenience; never let it surface as an order error.
+        }
+      });
     if (act === 'toggle')
       el.addEventListener('click', () => {
         collapsed = !collapsed;
@@ -350,6 +369,19 @@ function requestQuote(): void {
   }, 250);
 }
 
+/** Ask the worker whether the current market is starred, and repaint. */
+async function syncWatched(): Promise<void> {
+  if (!activeMeta) { watched = false; return; }
+  try {
+    const state = await send<{ watchlist: { marketKey: string }[] }>({ type: 'GET_STATE' });
+    const key = `${activeMeta.venue}:${activeMeta.venueMarketId}`;
+    watched = state.watchlist.some((w) => w.marketKey === key);
+  } catch {
+    watched = false;
+  }
+  render();
+}
+
 async function place(): Promise<void> {
   if (!quote || !activeMeta || busy) return;
   busy = true;
@@ -403,6 +435,7 @@ async function syncToUrl(): Promise<void> {
       activeMeta = next.meta;
       quote = null;
       statusLine = '';
+      void syncWatched();
       void requestQuote();
     }
   } catch {

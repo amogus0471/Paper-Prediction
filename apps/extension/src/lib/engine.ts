@@ -2,7 +2,7 @@
  * The local fill engine.
  *
  * This is the same `walkBook` that the server path uses — imported from
- * @ghostfill/core, property-tested at 99% coverage, not a second
+ * @polyfill/core, property-tested at 99% coverage, not a second
  * implementation. The four honesty rules hold identically here:
  *
  *   1. Never fill beyond visible depth.
@@ -33,7 +33,7 @@ import {
   type OrderSide,
   type OutcomeSide,
   type SimRealism,
-} from '@ghostfill/core';
+} from '@polyfill/core';
 import {
   findPosition,
   marketKey,
@@ -41,7 +41,7 @@ import {
   pushTxn,
   round2,
   round6,
-  type GhostState,
+  type LocalState,
   type StoredOrder,
   type StoredPosition,
 } from './store';
@@ -50,6 +50,18 @@ export const MAX_DEPTH_FRACTION = 0.05;
 export const PRICE_MOVE_TOLERANCE = 0.02;
 export const MAX_BOOK_AGE_MS = 30_000;
 export const POSITION_LIMIT_FRACTION = 0.2;
+/** Quotes are single-use and short-lived, matching the server's `quotes` TTL. */
+export const QUOTE_TTL_MS = 10_000;
+
+/**
+ * Quote IDs already spent.
+ *
+ * The service worker is a single context, so a module-level set is enough to
+ * make a quote single-use — which is what stops a double-click on Place from
+ * booking the same fill twice. Not persisted: a worker restart invalidates
+ * every outstanding quote anyway, since they expire in ten seconds.
+ */
+const consumedQuotes = new Set<string>();
 
 export const FEE_MODELS: Record<string, FeeModel> = {
   polymarket: {
@@ -147,6 +159,23 @@ export function priceOrder(opts: PriceOpts) {
   const ladder = ladderFor(opts.book, opts.outcome);
   const bookMid = midPrice(ladder);
 
+  // A closed market still has a book hanging around on both venues, so without
+  // this check the engine would happily fill an order on a question that has
+  // already been decided.
+  if (opts.meta.closeTime) {
+    const closesAt = new Date(opts.meta.closeTime).getTime();
+    if (Number.isFinite(closesAt) && closesAt <= Date.now()) {
+      const mins = Math.round((Date.now() - closesAt) / 60000);
+      throw new OrderError(
+        'market_closed',
+        'This market has closed.',
+        mins < 60
+          ? `It closed ${mins} minute${mins === 1 ? '' : 's'} ago.`
+          : `It closed ${Math.round(mins / 60)} hour${Math.round(mins / 60) === 1 ? '' : 's'} ago.`,
+      );
+    }
+  }
+
   assertNotResolved(ladder);
 
   // A book whose mirror invariants fail means the adapter mis-parsed the venue
@@ -186,7 +215,13 @@ export function priceOrder(opts: PriceOpts) {
     levels = [[bookMid, Number.MAX_SAFE_INTEGER]];
   }
 
-  const walk = walkBook(levels, opts.target, opts.meta.tickCents);
+  // walkBook snaps prices onto the venue's tick grid, which is right for a real
+  // fill and wrong for instant mode: a 40/41 book has a 40.5c mid that would
+  // snap straight back to the 41c ask, quietly making Instant identical to
+  // Realistic. Instant is already the admittedly-unrealistic mode, so it prices
+  // off-grid on purpose.
+  const tickForWalk = cfg.usesMid ? 0 : opts.meta.tickCents;
+  const walk = walkBook(levels, opts.target, tickForWalk);
 
   if (walk.totalQty <= 0) {
     throw new OrderError(
@@ -204,7 +239,7 @@ export function priceOrder(opts: PriceOpts) {
     throw new OrderError(
       'size_exceeds_depth',
       "Larger than this market can absorb — in reality you'd move the price against yourself.",
-      `G$${walk.cost.toFixed(2)} against G$${depth.toFixed(2)} of visible depth. Cap is 5%.`,
+      `P$${walk.cost.toFixed(2)} against P$${depth.toFixed(2)} of visible depth. Cap is 5%.`,
     );
   }
 
@@ -285,6 +320,23 @@ export async function submitOrder(opts: SubmitOpts): Promise<StoredOrder> {
   const { meta, quote, fillBook } = opts;
   const key = marketKey(meta.venue, meta.venueMarketId);
 
+  // Single-use, before the mutation queue, so a double-click cannot slip a
+  // second submission in behind the first one's await.
+  if (consumedQuotes.has(quote.quoteId)) {
+    throw new OrderError('duplicate', 'That order was already placed.');
+  }
+  const age = Date.now() - new Date(quote.quotedAt).getTime();
+  if (age > QUOTE_TTL_MS) {
+    throw new OrderError(
+      'quote_expired',
+      'Your quote expired. Refreshing…',
+      `Quotes are good for ${QUOTE_TTL_MS / 1000} seconds; this one was ${Math.round(age / 1000)}s old.`,
+    );
+  }
+  consumedQuotes.add(quote.quoteId);
+  // Bound the set: anything this old is expired by definition.
+  if (consumedQuotes.size > 200) consumedQuotes.clear();
+
   return mutate<StoredOrder>((state) => {
     // Re-walk on the LATER book. Whatever comes out is the fill.
     const priced = priceOrder({
@@ -317,7 +369,7 @@ export async function submitOrder(opts: SubmitOpts): Promise<StoredOrder> {
       if (total > state.cash) {
         throw new OrderError(
           'insufficient_funds',
-          `Not enough ghost cash. You have G$${state.cash.toFixed(2)}; this costs G$${total.toFixed(2)}.`,
+          `Not enough sim cash. You have P$${state.cash.toFixed(2)}; this costs P$${total.toFixed(2)}.`,
         );
       }
       // No more than 20% of the bankroll in a single market. Position sizing is
@@ -333,7 +385,7 @@ export async function submitOrder(opts: SubmitOpts): Promise<StoredOrder> {
         throw new OrderError(
           'position_limit',
           `This would put more than 20% of your bankroll in one market.`,
-          `G$${(exposure + total).toFixed(2)} of a G$${equity.toFixed(2)} bankroll. Position sizing is the point.`,
+          `P$${(exposure + total).toFixed(2)} of a P$${equity.toFixed(2)} bankroll. Position sizing is the point.`,
         );
       }
     } else if (!existing || existing.qty < priced.walk.totalQty) {
@@ -360,6 +412,10 @@ export async function submitOrder(opts: SubmitOpts): Promise<StoredOrder> {
           marketKey: key,
           venue: meta.venue,
           question: meta.question,
+          // Frozen at entry: the Record screen splits calibration by category,
+          // and re-deriving it later would depend on the venue still saying
+          // the same thing about a market that has since resolved.
+          category: meta.category ?? meta.venue,
           outcome: quote.outcome,
           qty: priced.walk.totalQty,
           avgEntryPrice: priced.walk.avgPrice,

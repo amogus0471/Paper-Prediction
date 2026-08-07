@@ -1,4 +1,4 @@
-import type { Ladder, NormalizedBook, OrderSide, VenueCode } from '@ghostfill/core';
+import type { Ladder, NormalizedBook, OrderSide, VenueCode } from '@polyfill/core';
 
 export type { Ladder, NormalizedBook, VenueCode };
 

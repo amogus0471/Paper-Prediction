@@ -6,7 +6,7 @@ import {
   type Level,
   type NormalizedBook,
   type OrderSide,
-} from '@ghostfill/core';
+} from '@polyfill/core';
 import { dollarsStringToCents, num, parseDate, sizeStringToQty } from './decimal-parse';
 import { mapConcurrent, venueFetch } from './http';
 import type {
@@ -27,7 +27,7 @@ import { VenueError } from './types';
  *
  * That contradicts guidance saying the orderbook requires RSA-PSS signing, so
  * it is worth being explicit: signing is required for account and trading
- * endpoints, which Ghostfill never calls, because Ghostfill never places a real
+ * endpoints, which Polyfill never calls, because Polyfill never places a real
  * order. If a read ever starts returning 401, `KalshiAdapter` will surface it
  * as a retryable VenueError rather than silently serving a stale book.
  */

@@ -1,32 +1,52 @@
-import { StrictMode, useCallback, useEffect, useMemo, useState } from 'react';
+import { StrictMode, useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-  formatCents,
-  formatCompact,
-  formatCountdown,
-  formatGhostDollars,
-  formatSignedGhostDollars,
-  formatSignedPercent,
-  summarizeCalibration,
-  coachingVerdict,
+  BRAND,
   MIN_N_FOR_BSS,
-  type CalibrationRecord,
-} from '@ghostfill/core';
+  MIN_N_FOR_CATEGORY,
+  formatCents,
+  formatCountdown,
+  formatSimDollars,
+  formatSignedSimDollars,
+  formatSignedPercent,
+  readinessProgress,
+} from '@polyfill/core';
 import { send } from '../lib/messages';
 import { playSound } from '../lib/sfx';
-import { summarize, checkLedger, type GhostState, type Settings, type StoredPosition } from '../lib/store';
+import type { LocalRecord } from '../lib/record';
+import {
+  summarize,
+  checkLedger,
+  type LocalState,
+  type Settings,
+  type StoredPosition,
+} from '../lib/store';
 import './styles.css';
 
-type Tab = 'dashboard' | 'positions' | 'history' | 'record' | 'settings';
+type Tab = 'book' | 'watch' | 'record' | 'history' | 'settings';
+
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'book', label: 'Book' },
+  { id: 'watch', label: 'Watch' },
+  { id: 'record', label: 'Record' },
+  { id: 'history', label: 'History' },
+  { id: 'settings', label: 'Settings' },
+];
 
 function App() {
-  const [state, setState] = useState<GhostState | null>(null);
-  const [tab, setTab] = useState<Tab>('dashboard');
+  const [state, setState] = useState<LocalState | null>(null);
+  const [record, setRecord] = useState<LocalRecord | null>(null);
+  const [tab, setTab] = useState<Tab>('book');
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      setState(await send<GhostState>({ type: 'GET_STATE' }));
+      const [s, r] = await Promise.all([
+        send<LocalState>({ type: 'GET_STATE' }),
+        send<LocalRecord>({ type: 'GET_RECORD' }),
+      ]);
+      setState(s);
+      setRecord(r);
       setError(null);
     } catch (e) {
       setError((e as Error).message);
@@ -35,7 +55,7 @@ function App() {
 
   useEffect(() => {
     void refresh();
-    // chrome.storage fires on every write from the worker or the overlay, so
+    // The worker and the overlay both write; chrome.storage tells us when, so
     // the panel stays live without polling.
     const onChange = () => void refresh();
     chrome.storage.local.onChanged.addListener(onChange);
@@ -43,35 +63,19 @@ function App() {
   }, [refresh]);
 
   useEffect(() => {
-    if (state?.settings.colorblindMode) {
-      document.documentElement.dataset.cb = '1';
-    } else {
-      delete document.documentElement.dataset.cb;
-    }
+    if (state?.settings.colorblindMode) document.documentElement.dataset.cb = '1';
+    else delete document.documentElement.dataset.cb;
   }, [state?.settings.colorblindMode]);
 
-  if (error) {
+  if (error || !state || !record) {
     return (
       <div className="app">
         <SimBar />
         <main>
           <div className="empty">
-            Could not reach the Ghostfill worker.
-            <br />
-            <br />
-            {error}
+            {error ? `Could not reach the ${BRAND.name} worker.` : 'Loading…'}
+            {error ? <div className="note">{error}</div> : null}
           </div>
-        </main>
-      </div>
-    );
-  }
-
-  if (!state) {
-    return (
-      <div className="app">
-        <SimBar />
-        <main>
-          <div className="empty">Loading…</div>
         </main>
       </div>
     );
@@ -83,125 +87,122 @@ function App() {
     <div className="app">
       <SimBar />
       <header>
-        <div className="handle">{state.settings.handle ?? 'Local portfolio'} · lifetime</div>
-        <div className="equity num">{formatGhostDollars(s.equity)}</div>
+        <div className="handle">{BRAND.name} · lifetime paper account</div>
+        <div className="equity num">{formatSimDollars(s.equity)}</div>
         <div className={`delta num ${s.returnPct > 0 ? 'up' : s.returnPct < 0 ? 'down' : 'flat'}`}>
-          {formatSignedGhostDollars(s.equity - state.startingBalance)} ({formatSignedPercent(s.returnPct)})
+          {formatSignedSimDollars(s.equity - state.startingBalance)} (
+          {formatSignedPercent(s.returnPct)})
         </div>
       </header>
 
       <nav role="tablist">
-        {(['dashboard', 'positions', 'history', 'record', 'settings'] as Tab[]).map((t) => (
-          <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}>
-            {t === 'dashboard' ? 'Book' : t[0]!.toUpperCase() + t.slice(1)}
+        {TABS.map((t) => (
+          <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)}>
+            {t.label}
+            {t.id === 'watch' && state.watchlist.length > 0 ? ` ${state.watchlist.length}` : ''}
           </button>
         ))}
       </nav>
 
       <main>
-        {tab === 'dashboard' && <Dashboard state={state} />}
-        {tab === 'positions' && <Positions state={state} />}
+        {tab === 'book' && <Book state={state} record={record} />}
+        {tab === 'watch' && <Watch state={state} onChange={refresh} />}
+        {tab === 'record' && <RecordScreen record={record} />}
         {tab === 'history' && <History state={state} />}
-        {tab === 'record' && <Record state={state} />}
         {tab === 'settings' && <SettingsView state={state} onChange={refresh} />}
       </main>
     </div>
   );
 }
 
-/** Non-dismissible, on every surface that shows a price, position or order. */
+/** Non-dismissible. Required on every surface showing a price, position or order. */
 function SimBar() {
   return (
     <div className="simbar">
       <span className="simdot" />
-      SIMULATED · NO REAL MONEY
+      {BRAND.disclaimer}
     </div>
   );
 }
 
-function Dashboard({ state }: { state: GhostState }) {
+function Row({ k, v, tone }: { k: string; v: string; tone?: number }) {
+  return (
+    <div className="row">
+      <span className="k">{k}</span>
+      <span className={`num ${tone == null ? '' : tone > 0 ? 'up' : tone < 0 ? 'down' : ''}`}>
+        {v}
+      </span>
+    </div>
+  );
+}
+
+function Stat({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="stat">
+      <div className="k">{k}</div>
+      <div className="v num">{v}</div>
+    </div>
+  );
+}
+
+// ── Book ────────────────────────────────────────────────────────────────────
+
+function Book({ state, record }: { state: LocalState; record: LocalRecord }) {
   const s = summarize(state);
   const ledger = checkLedger(state);
-
-  const curve = useMemo(() => {
-    const pts = [...state.transactions].reverse().map((t) => t.balanceAfter);
-    return pts.length > 1 ? pts : [state.startingBalance, state.cash];
-  }, [state.transactions, state.cash, state.startingBalance]);
+  const open = state.positions.filter((p) => p.isOpen);
+  const curve = [...state.transactions].reverse().map((t) => t.balanceAfter);
 
   return (
     <>
       <div className="card">
         <h3>Earnings</h3>
-        <Sparkline points={curve} />
-        <div className="row">
-          <span className="k">Realized P&amp;L</span>
-          <span className={`num ${s.realized > 0 ? 'up' : s.realized < 0 ? 'down' : ''}`}>
-            {formatSignedGhostDollars(s.realized)}
-          </span>
-        </div>
-        <div className="row">
-          <span className="k">Unrealized P&amp;L</span>
-          <span className={`num ${s.unrealized > 0 ? 'up' : s.unrealized < 0 ? 'down' : ''}`}>
-            {formatSignedGhostDollars(s.unrealized)}
-          </span>
-        </div>
-        <div className="row">
-          <span className="k">Fees paid</span>
-          <span className="num">{formatGhostDollars(s.totalFees)}</span>
-        </div>
-        <div className="row">
-          <span className="k">Peak equity</span>
-          <span className="num">{formatGhostDollars(s.peakEquity)}</span>
-        </div>
+        <Sparkline points={curve.length > 1 ? curve : [state.startingBalance, state.cash]} />
+        <Row k="Realized P&L" v={formatSignedSimDollars(s.realized)} tone={s.realized} />
+        <Row k="Unrealized P&L" v={formatSignedSimDollars(s.unrealized)} tone={s.unrealized} />
+        <Row k="Fees paid" v={formatSimDollars(s.totalFees)} />
+        <Row k="Peak equity" v={formatSimDollars(s.peakEquity)} />
       </div>
 
+      {/* The single most useful line from the Record screen, surfaced where the
+          user already is rather than behind a tab change. */}
+      {record.insight && (
+        <div className="card">
+          <h3>Where your edge is</h3>
+          <div className="insight">{record.insight}</div>
+        </div>
+      )}
+
       <div className="grid2" style={{ marginBottom: 8 }}>
-        <div className="stat">
-          <div className="k">Cash</div>
-          <div className="v num">{formatGhostDollars(s.cash)}</div>
-        </div>
-        <div className="stat">
-          <div className="k">At risk</div>
-          <div className="v num">{formatGhostDollars(s.costBasis)}</div>
-        </div>
-        <div className="stat">
-          <div className="k">Open</div>
-          <div className="v num">{s.openCount}</div>
-        </div>
-        <div className="stat">
-          <div className="k">Trades</div>
-          <div className="v num">{s.tradeCount}</div>
-        </div>
-        <div className="stat">
-          <div className="k">Markets</div>
-          <div className="v num">{s.marketsTraded}</div>
-        </div>
-        <div className="stat">
-          <div className="k">Win rate</div>
-          <div className="v num">
-            {s.winRate == null ? '--' : `${Math.round(s.winRate * 100)}%`}
-          </div>
-        </div>
+        <Stat k="Cash" v={formatSimDollars(s.cash)} />
+        <Stat k="At risk" v={formatSimDollars(s.costBasis)} />
+        <Stat k="Open" v={String(s.openCount)} />
+        <Stat k="Trades" v={String(s.tradeCount)} />
+        <Stat k="Markets" v={String(s.marketsTraded)} />
+        <Stat k="Win rate" v={s.winRate == null ? '--' : `${Math.round(s.winRate * 100)}%`} />
       </div>
 
       {!ledger.ok && (
-        <div className="card" style={{ borderLeftColor: 'var(--no)' }}>
+        <div className="card danger">
           <h3>Ledger drift detected</h3>
           <div className="note">
-            Cash balance disagrees with the transaction ledger by{' '}
-            {formatGhostDollars(ledger.drift)}. This should never happen — please report it.
+            Cash disagrees with the transaction ledger by {formatSimDollars(ledger.drift)}. This
+            should never happen — please report it.
           </div>
         </div>
       )}
 
-      <div className="card">
-        <h3>How to trade</h3>
-        <div className="note">
-          Open any market on polymarket.com or kalshi.com. The Ghostfill panel appears in the
-          corner — pick a side, set a size, and place a ghost order. Fills are priced by walking
-          the venue&apos;s real order book, so a thin market gives you a genuinely bad average.
+      <h3 className="section">Open positions</h3>
+      {open.length === 0 ? (
+        <div className="empty">
+          No open positions.
+          <div className="note">
+            Open any market on Polymarket or Kalshi — the {BRAND.name} panel appears in the corner.
+          </div>
         </div>
-      </div>
+      ) : (
+        open.map((p) => <PositionCard key={p.marketKey + p.outcome} p={p} />)
+      )}
     </>
   );
 }
@@ -221,7 +222,6 @@ function Sparkline({ points }: { points: number[] }) {
     })
     .join(' ');
   const up = points[points.length - 1]! >= points[0]!;
-
   return (
     <svg className="spark" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true">
       <path d={d} fill="none" stroke={up ? 'var(--yes)' : 'var(--no)'} strokeWidth="1.5" />
@@ -229,33 +229,16 @@ function Sparkline({ points }: { points: number[] }) {
   );
 }
 
-function Positions({ state }: { state: GhostState }) {
-  const open = state.positions.filter((p) => p.isOpen);
-  if (open.length === 0) {
-    return <div className="empty">No open positions.<br />Open a market on Polymarket or Kalshi to place your first ghost order.</div>;
-  }
-  return (
-    <>
-      {open.map((p) => (
-        <PositionCard key={p.marketKey + p.outcome} p={p} />
-      ))}
-    </>
-  );
-}
-
 function PositionCard({ p }: { p: StoredPosition }) {
   const value = p.markPrice != null ? (p.qty * p.markPrice) / 100 : p.costBasis;
   const pnl = value - p.costBasis;
   const unit = p.venue === 'polymarket' ? 'shares' : 'contracts';
-
   return (
     <div className="pos">
       <div className="q">{p.question}</div>
       <div className="line" style={{ marginBottom: 4 }}>
         <span>
-          <span className={`tag ${p.outcome}`}>
-            {p.outcome === 'yes' ? '▲ YES' : '▼ NO'}
-          </span>{' '}
+          <span className={`tag ${p.outcome}`}>{p.outcome === 'yes' ? '▲ YES' : '▼ NO'}</span>{' '}
           <span className="tag">{p.venue}</span>
         </span>
         <span>{p.closeTime ? formatCountdown(p.closeTime) : ''}</span>
@@ -267,81 +250,123 @@ function PositionCard({ p }: { p: StoredPosition }) {
         <span className="num">mark {formatCents(p.markPrice)}</span>
       </div>
       <div className="line" style={{ marginTop: 3 }}>
-        <span>Cost {formatGhostDollars(p.costBasis)}</span>
+        <span>Cost {formatSimDollars(p.costBasis)}</span>
         <span className={`num ${pnl > 0 ? 'up' : pnl < 0 ? 'down' : ''}`}>
-          {formatSignedGhostDollars(pnl)}
+          {formatSignedSimDollars(pnl)}
         </span>
       </div>
     </div>
   );
 }
 
-function History({ state }: { state: GhostState }) {
-  if (state.orders.length === 0) return <div className="empty">No orders yet.</div>;
+// ── Watch ───────────────────────────────────────────────────────────────────
+
+function Watch({ state, onChange }: { state: LocalState; onChange: () => void }) {
+  const [busy, setBusy] = useState(false);
+
+  const refreshNow = async () => {
+    setBusy(true);
+    try {
+      await send({ type: 'REFRESH_WATCHLIST' });
+      onChange();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unstar = async (w: LocalState['watchlist'][number]) => {
+    await send({
+      type: 'TOGGLE_WATCH',
+      meta: {
+        venue: w.venue,
+        venueMarketId: w.venueMarketId,
+        question: w.question,
+        yesLabel: 'Yes',
+        noLabel: 'No',
+        tickCents: 1,
+        minOrderSize: 1,
+        category: w.category,
+        closeTime: w.closeTime,
+      },
+      mid: w.lastMid,
+    });
+    onChange();
+  };
+
+  if (state.watchlist.length === 0) {
+    return (
+      <div className="empty">
+        Nothing on your watchlist.
+        <div className="note">
+          Star a market from the {BRAND.name} panel on Polymarket or Kalshi. Watched markets
+          refresh more often than browsed ones.
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
-      {state.orders.slice(0, 60).map((o) => (
-        <div className="pos" key={o.id}>
-          <div className="q">{o.question}</div>
-          <div className="line" style={{ marginBottom: 3 }}>
+      <button className="action" onClick={() => void refreshNow()} disabled={busy}>
+        {busy ? 'Refreshing…' : 'Refresh prices now'}
+      </button>
+      <div style={{ height: 10 }} />
+      {state.watchlist.map((w) => (
+        <div className="pos" key={w.marketKey}>
+          <div className="q">{w.question}</div>
+          <div className="line" style={{ marginTop: 4 }}>
             <span>
-              <span className={`tag ${o.outcome}`}>
-                {o.side === 'buy' ? 'BUY' : 'SELL'} {o.outcome.toUpperCase()}
-              </span>{' '}
-              <span className="tag">{o.status}</span>
+              <span className="tag">{w.venue}</span>
+              {w.category ? (
+                <span className="tag" style={{ marginLeft: 4 }}>
+                  {w.category}
+                </span>
+              ) : null}
             </span>
-            <span>{new Date(o.ts).toLocaleTimeString()}</span>
+            <span className="num bigprice">{w.lastMid != null ? formatCents(w.lastMid) : '--'}</span>
           </div>
-          <div className="line">
-            <span>
-              {o.qtyFilled.toLocaleString()} @ {formatCents(o.avgPrice)}
-            </span>
-            <span className="num">{formatGhostDollars(o.cost + o.fee)}</span>
+          <div className="line" style={{ marginTop: 3 }}>
+            <span>{w.closeTime ? `closes ${formatCountdown(w.closeTime)}` : ''}</span>
+            <button className="linkbtn" onClick={() => void unstar(w)}>
+              Unstar
+            </button>
           </div>
-          {o.avgPrice !== o.quotedPrice && (
-            <div className="line" style={{ marginTop: 2, color: 'var(--dim)' }}>
-              <span>quoted {formatCents(o.quotedPrice)}</span>
-              <span>{o.latencyMs}ms latency · {Math.round(o.slippageBps)} bps</span>
-            </div>
-          )}
         </div>
       ))}
     </>
   );
 }
 
-/**
- * The Record screen. Statistical honesty is mandatory here: no Brier Skill
- * Score below n = 30, and the confidence interval is always shown.
- */
-function Record({ state }: { state: GhostState }) {
-  const records: CalibrationRecord[] = state.positions
-    .filter((p) => p.settledAt && p.scoringEligible && p.outcomeResult !== undefined)
-    .map((p) => ({
-      pUser: p.entryPUser,
-      pMarket: p.entryPMarket,
-      outcome: p.outcomeResult ? 1 : 0,
-    }));
+// ── Record ──────────────────────────────────────────────────────────────────
 
-  const cal = summarizeCalibration(records);
+/**
+ * Statistical honesty is mandatory here: no headline skill score below n=30, a
+ * confidence interval whenever one is shown, and thin categories greyed out
+ * rather than presented as findings.
+ */
+function RecordScreen({ record }: { record: LocalRecord }) {
+  const { summary: cal, bins, categories, verdict, readiness } = record;
 
   return (
     <>
       <div className="card">
         <h3>Brier Skill Score vs the market</h3>
-        {cal.displayable ? (
+        {cal.displayable && cal.brierSkill != null ? (
           <>
-            <div className={`bss num ${(cal.brierSkill ?? 0) > 0 ? 'up' : 'down'}`}>
-              {(cal.brierSkill ?? 0) > 0 ? '+' : ''}
-              {(cal.brierSkill ?? 0).toFixed(3)}
+            <div className={`bss num ${cal.brierSkill > 0 ? 'up' : 'down'}`}>
+              {cal.brierSkill > 0 ? '+' : ''}
+              {cal.brierSkill.toFixed(3)}
             </div>
             <div className="note">
-              95% CI {cal.ciLow?.toFixed(3)} to {cal.ciHigh?.toFixed(3)} (approximate) · n = {cal.n}
+              {cal.ciLow != null && cal.ciHigh != null
+                ? `95% CI ${cal.ciLow.toFixed(3)} to ${cal.ciHigh.toFixed(3)} (approximate) · `
+                : ''}
+              n = {cal.n}
             </div>
           </>
         ) : (
           <>
-            <div className="bss num" style={{ color: 'var(--muted)' }}>
+            <div className="bss num muted">
               {cal.n}/{MIN_N_FOR_BSS}
             </div>
             <div className="progress">
@@ -355,50 +380,200 @@ function Record({ state }: { state: GhostState }) {
         )}
       </div>
 
-      <div className="card">
+      <div className={`card ${verdict.positive ? 'good' : ''}`}>
         <h3>Verdict</h3>
-        <div className="note" style={{ fontSize: 12, color: 'var(--text)' }}>
-          {coachingVerdict(cal)}
-        </div>
+        <div className="verdict">{verdict.headline}</div>
+        <div className="note">{verdict.advice}</div>
       </div>
+
+      {bins.length > 0 && (
+        <div className="card">
+          <h3>Calibration curve</h3>
+          <CalibrationChart bins={bins} />
+          <div className="note">
+            Each dot is a group of your forecasts; size shows how many. On the dashed line, things
+            you called 70% happened 70% of the time. Above it you were too cautious, below it too
+            confident.
+          </div>
+        </div>
+      )}
+
+      {categories.length > 0 && (
+        <div className="card">
+          <h3>By category</h3>
+          {categories.map((c) => (
+            <div className="row" key={c.category}>
+              <span className="k">
+                {c.category} <span className="tag">n={c.n}{c.reliable ? '' : ' thin'}</span>
+              </span>
+              <span
+                className={`num ${!c.reliable ? 'muted' : (c.brierSkill ?? 0) > 0 ? 'up' : 'down'}`}
+              >
+                {c.brierSkill == null
+                  ? '--'
+                  : `${c.brierSkill > 0 ? '+' : ''}${c.brierSkill.toFixed(3)}`}
+              </span>
+            </div>
+          ))}
+          <div className="note">
+            Categories under {MIN_N_FOR_CATEGORY} resolved positions are greyed out — too few to
+            read anything into.
+          </div>
+        </div>
+      )}
 
       {cal.n > 0 && (
         <div className="card">
           <h3>Murphy decomposition</h3>
-          <div className="row">
-            <span className="k">Reliability (lower better)</span>
-            <span className="num">{cal.murphy.reliability.toFixed(4)}</span>
-          </div>
-          <div className="row">
-            <span className="k">Resolution (higher better)</span>
-            <span className="num">{cal.murphy.resolution.toFixed(4)}</span>
-          </div>
-          <div className="row">
-            <span className="k">Uncertainty</span>
-            <span className="num">{cal.murphy.uncertainty.toFixed(4)}</span>
-          </div>
-          <div className="row">
-            <span className="k">Your Brier</span>
-            <span className="num">{cal.brierUser.toFixed(4)}</span>
-          </div>
-          <div className="row">
-            <span className="k">Market&apos;s Brier</span>
-            <span className="num">{cal.brierMarket.toFixed(4)}</span>
+          <Row k="Reliability (lower better)" v={cal.murphy.reliability.toFixed(4)} />
+          <Row k="Resolution (higher better)" v={cal.murphy.resolution.toFixed(4)} />
+          <Row k="Uncertainty" v={cal.murphy.uncertainty.toFixed(4)} />
+          <Row k="Your Brier" v={cal.brierUser.toFixed(4)} />
+          <Row k="Market's Brier" v={cal.brierMarket.toFixed(4)} />
+          <div className="note">
+            Reliability is whether your probabilities mean what they say. Resolution is whether
+            they are informative at all — a coin-flipper can be perfectly reliable and useless.
           </div>
         </div>
       )}
+
+      <ReadinessCard readiness={readiness} />
     </>
   );
 }
 
-function SettingsView({ state, onChange }: { state: GhostState; onChange: () => void }) {
+function CalibrationChart({ bins }: { bins: LocalRecord['bins'] }) {
+  const size = 200;
+  const pad = 20;
+  const inner = size - pad * 2;
+  const maxN = Math.max(...bins.map((b) => b.n), 1);
+  const x = (v: number) => pad + v * inner;
+  const y = (v: number) => size - pad - v * inner;
+
+  return (
+    <svg
+      className="calchart"
+      viewBox={`0 0 ${size} ${size}`}
+      role="img"
+      aria-label="Calibration curve: forecast probability against observed frequency"
+    >
+      <rect x={pad} y={pad} width={inner} height={inner} fill="none" stroke="var(--border)" />
+      {/* Perfect calibration */}
+      <line x1={x(0)} y1={y(0)} x2={x(1)} y2={y(1)} stroke="var(--muted)" strokeDasharray="3 3" />
+      {bins.map((b) => (
+        <circle
+          key={b.bin}
+          cx={x(b.meanPredicted)}
+          cy={y(b.observedFrequency)}
+          r={3 + (b.n / maxN) * 5}
+          fill="var(--brand)"
+          fillOpacity={0.75}
+        />
+      ))}
+      <text x={pad} y={size - 6} fill="var(--dim)" fontSize="8">
+        you said 0%
+      </text>
+      <text x={size - pad - 30} y={size - 6} fill="var(--dim)" fontSize="8">
+        100%
+      </text>
+    </svg>
+  );
+}
+
+/**
+ * The Readiness Check — the feature that makes "learn before it costs you
+ * anything" literal. Locked until there is enough evidence to mean it, and
+ * blunt once there is.
+ */
+function ReadinessCard({ readiness }: { readiness: LocalRecord['readiness'] }) {
+  const tone =
+    readiness.status === 'ready' ? 'good' : readiness.status === 'not_ready' ? 'danger' : '';
+
+  return (
+    <div className={`card ${tone}`}>
+      <h3>Readiness Check</h3>
+      {!readiness.unlocked ? (
+        <>
+          <div className="verdict muted">{readiness.headline}</div>
+          <div className="progress">
+            <div style={{ width: `${readinessProgress(readiness.n) * 100}%` }} />
+          </div>
+          <div className="note">{readiness.body[0]}</div>
+          <div className="note">{readiness.bottomLine}</div>
+        </>
+      ) : (
+        <>
+          <div className="verdict">{readiness.headline}</div>
+          {readiness.body.map((line) => (
+            <div className="note" key={line}>
+              {line}
+            </div>
+          ))}
+          <div className="bottomline">{readiness.bottomLine}</div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── History ─────────────────────────────────────────────────────────────────
+
+function History({ state }: { state: LocalState }) {
+  if (state.orders.length === 0) return <div className="empty">No orders yet.</div>;
+  return (
+    <>
+      {state.orders.slice(0, 60).map((o) => (
+        <div className="pos" key={o.id}>
+          <div className="q">{o.question}</div>
+          <div className="line" style={{ marginBottom: 3 }}>
+            <span>
+              <span className={`tag ${o.outcome}`}>
+                {o.side === 'buy' ? 'BUY' : 'SELL'} {o.outcome.toUpperCase()}
+              </span>{' '}
+              <span className="tag">{o.status}</span>
+              {o.realism === 'instant' && (
+                <span className="tag" style={{ marginLeft: 4 }}>
+                  unscored
+                </span>
+              )}
+            </span>
+            <span>{new Date(o.ts).toLocaleTimeString()}</span>
+          </div>
+          <div className="line">
+            <span>
+              {o.qtyFilled.toLocaleString()} @ {formatCents(o.avgPrice)}
+            </span>
+            <span className="num">{formatSimDollars(o.cost + o.fee)}</span>
+          </div>
+          {o.avgPrice !== o.quotedPrice && (
+            <div className="line dim" style={{ marginTop: 2 }}>
+              <span>quoted {formatCents(o.quotedPrice)}</span>
+              <span>
+                {o.latencyMs}ms · {Math.round(o.slippageBps)} bps
+              </span>
+            </div>
+          )}
+        </div>
+      ))}
+    </>
+  );
+}
+
+// ── Settings ────────────────────────────────────────────────────────────────
+
+function SettingsView({ state, onChange }: { state: LocalState; onChange: () => void }) {
   const set = async (patch: Partial<Settings>) => {
     await send({ type: 'SET_SETTINGS', patch });
     onChange();
   };
 
   const reset = async () => {
-    if (!confirm('Reset your ghost portfolio to G$10,000? Trade history is cleared. This cannot be undone.')) return;
+    if (
+      !confirm(
+        `Reset your paper portfolio to ${BRAND.currencySymbol}10,000? Trade history is cleared. This cannot be undone.`,
+      )
+    )
+      return;
     await send({ type: 'RESET_PORTFOLIO' });
     onChange();
   };
@@ -415,7 +590,7 @@ function SettingsView({ state, onChange }: { state: GhostState; onChange: () => 
           >
             <option value="instant">Instant — fills at the mid, no fees (tutorial only)</option>
             <option value="realistic">Realistic — real book, real fees, 250ms latency</option>
-            <option value="brutal">Brutal — 1 tick worse, 1.5x fees, 750ms latency</option>
+            <option value="brutal">Brutal — 1 tick worse, 1.5× fees, 750ms latency</option>
           </select>
         </label>
         <div className="note">
@@ -428,23 +603,13 @@ function SettingsView({ state, onChange }: { state: GhostState; onChange: () => 
       <div className="card">
         <h3>Order defaults</h3>
         <label className="field">
-          <span className="lbl">Default order size (G$)</span>
+          <span className="lbl">Default order size ({BRAND.currencySymbol})</span>
           <input
             type="number"
             min={1}
             value={state.settings.defaultOrderSize}
             onChange={(e) => void set({ defaultOrderSize: Number(e.target.value) || 100 })}
           />
-        </label>
-        <label className="field">
-          <span className="lbl">Size in</span>
-          <select
-            value={state.settings.sizeMode}
-            onChange={(e) => void set({ sizeMode: e.target.value as Settings['sizeMode'] })}
-          >
-            <option value="dollars">Dollars</option>
-            <option value="contracts">Contracts / shares</option>
-          </select>
         </label>
         <Toggle
           label="Confirm before placing"
@@ -474,15 +639,16 @@ function SettingsView({ state, onChange }: { state: GhostState; onChange: () => 
             step={0.05}
             value={state.settings.soundVolume}
             onChange={(e) => void set({ soundVolume: Number(e.target.value) })}
-            onMouseUp={() => playSound('tick', state.settings.soundVolume, state.settings.soundEnabled)}
+            onMouseUp={() =>
+              playSound('tick', state.settings.soundVolume, state.settings.soundEnabled)
+            }
           />
         </label>
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div className="btnrow">
           {(['fill', 'partial', 'reject', 'settle'] as const).map((n) => (
             <button
               key={n}
-              className="action"
-              style={{ fontSize: 11, padding: 6 }}
+              className="action small"
               onClick={() => playSound(n, state.settings.soundVolume, true)}
             >
               {n}
@@ -494,7 +660,7 @@ function SettingsView({ state, onChange }: { state: GhostState; onChange: () => 
       <div className="card">
         <h3>Display</h3>
         <Toggle
-          label="Ghost Mode overlay"
+          label={`${BRAND.name} overlay`}
           desc="Show the trading panel on polymarket.com and kalshi.com."
           checked={state.settings.overlayEnabled}
           onChange={(v) => void set({ overlayEnabled: v })}
@@ -511,35 +677,36 @@ function SettingsView({ state, onChange }: { state: GhostState; onChange: () => 
         <h3>Leaderboard</h3>
         <Toggle
           label="Compete on the ladder"
-          desc="Off by default. Solo play is fully local and never leaves your browser. Turning this on creates an anonymous handle so your scores can be ranked server-side — the only way a leaderboard can mean anything."
+          desc="Off by default. Solo play is fully local and never leaves your browser."
           checked={state.settings.competeOptIn}
           onChange={(v) => void set({ competeOptIn: v })}
         />
-        {state.settings.competeOptIn && (
-          <div className="note">
-            Still anonymous — no email, no password. Ladder play requires Realistic or Brutal mode.
-          </div>
-        )}
+        <div className="note">
+          <strong>Not wired up yet.</strong> The backend is deployed and tested, but the opt-in
+          flow is deliberately unfinished — this switch currently only records the preference. When
+          it ships you will get an anonymous handle, no email and no password, and eligibility will
+          require 10 trades across 5 markets and 2 categories on an account at least 72 hours old.
+        </div>
       </div>
 
       <div className="card">
-        <h3>What Ghostfill does not simulate</h3>
+        <h3>What {BRAND.name} does not simulate</h3>
         <div className="note">
-          Ghostfill does not model market impact. Your ghost orders never touch the real book, so
-          they cannot move it. Order size is capped at 5% of visible depth to keep that
-          approximation honest. Fills never exceed the liquidity actually shown on the venue —
-          if a book is thin, you get a bad average, exactly as you would in reality.
+          No market impact modelling. Your paper orders never touch the real book, so they cannot
+          move it. Order size is capped at 5% of visible depth to keep that approximation honest,
+          and fills never exceed the liquidity the venue actually showed — if a book is thin, you
+          get a bad average, exactly as you would in reality.
         </div>
       </div>
 
       <div className="card">
         <h3>Data</h3>
         <div className="note" style={{ marginBottom: 9 }}>
-          Everything above is stored in this browser only. Ghostfill has no account for you and
-          sends nothing anywhere unless you opt into the leaderboard. Portfolio resets: {state.resetCount}.
+          Everything is stored in this browser only. {BRAND.name} has no account for you and sends
+          nothing anywhere. Portfolio resets: {state.resetCount}.
         </div>
         <button className="action danger" onClick={() => void reset()}>
-          Reset portfolio to G$10,000
+          Reset portfolio to {BRAND.currencySymbol}10,000
         </button>
       </div>
     </>

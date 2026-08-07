@@ -1,7 +1,7 @@
 import { clamp, roundTo } from './decimal';
 
 /**
- * Calibration scoring — the thing that makes Ghostfill more than a toy.
+ * Calibration scoring — the thing that makes Polyfill more than a toy.
  *
  * P&L tells you whether you got lucky. A Brier Skill Score against the market's
  * own price tells you whether you were *right*: did the forecast you paid for

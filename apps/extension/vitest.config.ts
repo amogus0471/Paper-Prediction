@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url';
 export default defineConfig({
   resolve: {
     alias: {
-      '@ghostfill/core': fileURLToPath(new URL('../../packages/core/src/index.ts', import.meta.url)),
-      '@ghostfill/venues': fileURLToPath(
+      '@polyfill/core': fileURLToPath(new URL('../../packages/core/src/index.ts', import.meta.url)),
+      '@polyfill/venues': fileURLToPath(
         new URL('../../packages/venues/src/index.ts', import.meta.url),
       ),
     },

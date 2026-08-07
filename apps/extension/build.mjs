@@ -8,20 +8,46 @@
  *   3. copy manifest + icons
  *   4. assert the output is actually loadable, and carries no secrets
  *
- * Run: npm run build --workspace @ghostfill/extension
+ * Run: npm run build --workspace @polyfill/extension
  */
 import { build as esbuild } from 'esbuild';
 import { build as viteBuild } from 'vite';
-import { cpSync, mkdirSync, readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
+import {
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  readdirSync,
+  statSync,
+} from 'node:fs';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+// Plain read+write, deliberately not cpSync/rmSync. Some filesystems (notably
+// network/synced mounts — this bit us during dev) refuse to unlink a file that
+// still has an open handle from a previous run, and both cpSync and rimraf do
+// an unlink under the hood. Overwriting a file's content in place never needs
+// one, so that's all this build ever does.
+function copyFile(src, dest) {
+  mkdirSync(dirname(dest), { recursive: true });
+  writeFileSync(dest, readFileSync(src));
+}
+function copyDir(srcDir, destDir) {
+  mkdirSync(destDir, { recursive: true });
+  for (const entry of readdirSync(srcDir)) {
+    const s = join(srcDir, entry);
+    const d = join(destDir, entry);
+    if (statSync(s).isDirectory()) copyDir(s, d);
+    else copyFile(s, d);
+  }
+}
 
 const root = dirname(fileURLToPath(import.meta.url));
 const dist = resolve(root, 'dist');
 
 const alias = {
-  '@ghostfill/core': resolve(root, '../../packages/core/src/index.ts'),
-  '@ghostfill/venues': resolve(root, '../../packages/venues/src/index.ts'),
+  '@polyfill/core': resolve(root, '../../packages/core/src/index.ts'),
+  '@polyfill/venues': resolve(root, '../../packages/venues/src/index.ts'),
 };
 
 console.log('▸ side panel');
@@ -49,8 +75,8 @@ for (const [name, entry, format] of [
 
 console.log('▸ manifest + icons');
 mkdirSync(dist, { recursive: true });
-cpSync(resolve(root, 'manifest.json'), resolve(dist, 'manifest.json'));
-cpSync(resolve(root, 'public/icons'), resolve(dist, 'icons'), { recursive: true });
+copyFile(resolve(root, 'manifest.json'), resolve(dist, 'manifest.json'));
+copyDir(resolve(root, 'public/icons'), resolve(dist, 'icons'));
 
 // ── verification ────────────────────────────────────────────────────────────
 // A build that emits a content script Chrome refuses to run is worse than a

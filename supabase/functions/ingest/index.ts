@@ -8,7 +8,7 @@
 // the books mode always prioritises tiers before volume.
 
 import { ApiError, handler, json, requireCronSecret } from '../_shared/api.ts';
-import { checkBookInvariants, createAdapters, midPrice } from '../_shared/ghostfill.js';
+import { checkBookInvariants, createAdapters, midPrice } from '../_shared/polyfill.js';
 
 const VENUES = ['kalshi', 'polymarket'] as const;
 

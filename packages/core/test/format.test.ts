@@ -4,13 +4,13 @@ import {
   formatCents,
   formatCompact,
   formatCountdown,
-  formatGhostDollars,
+  formatSimDollars,
   formatPercent,
   formatProbability,
   formatQty,
   formatRelativeTime,
   formatScore,
-  formatSignedGhostDollars,
+  formatSignedSimDollars,
   formatSignedPercent,
   rejectCopy,
   unitNoun,
@@ -63,16 +63,16 @@ describe('formatters', () => {
     expect(formatCents(null)).toBe('--');
   });
 
-  it('always prefixes ghost dollars so they cannot be mistaken for real money', () => {
-    expect(formatGhostDollars(1234.5)).toBe('G$1,234.50');
-    expect(formatGhostDollars(-50)).toBe('-G$50.00');
-    expect(formatGhostDollars(null)).toBe('--');
+  it('always prefixes sim dollars so they cannot be mistaken for real money', () => {
+    expect(formatSimDollars(1234.5)).toBe('P$1,234.50');
+    expect(formatSimDollars(-50)).toBe('-P$50.00');
+    expect(formatSimDollars(null)).toBe('--');
   });
 
   it('signs P&L explicitly', () => {
-    expect(formatSignedGhostDollars(120)).toBe('+G$120.00');
-    expect(formatSignedGhostDollars(-120)).toBe('-G$120.00');
-    expect(formatSignedGhostDollars(0)).toBe('G$0.00');
+    expect(formatSignedSimDollars(120)).toBe('+P$120.00');
+    expect(formatSignedSimDollars(-120)).toBe('-P$120.00');
+    expect(formatSignedSimDollars(0)).toBe('P$0.00');
   });
 
   it('formats percents, probabilities, bps and scores', () => {
@@ -136,8 +136,8 @@ describe('formatters', () => {
   it('has specific copy for every rejection, never a generic failure', () => {
     expect(rejectCopy('size_exceeds_depth')).toContain('move the price against yourself');
     expect(rejectCopy('price_moved')).toContain('Requote');
-    expect(rejectCopy('insufficient_funds', 'You have G$412; this costs G$500.')).toBe(
-      'You have G$412; this costs G$500.',
+    expect(rejectCopy('insufficient_funds', 'You have P$412; this costs P$500.')).toBe(
+      'You have P$412; this costs P$500.',
     );
     expect(rejectCopy('unknown_code')).toBe('Order rejected.');
   });

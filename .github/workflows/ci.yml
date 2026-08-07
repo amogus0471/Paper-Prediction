@@ -1,0 +1,54 @@
+name: CI
+
+# The failure mode this exists to catch: a build that crashes partway through
+# and leaves a dist/ Chrome refuses to load. That happened once already, and it
+# looked like a manifest problem rather than a build problem.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Nightly, to catch venue schema drift.
+    - cron: "0 6 * * *"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # typecheck && test && build, the same one command a human should run
+      # before trusting a change. Live-network suites are gated behind LIVE=1
+      # and stay skipped here — a CI runner with no outbound access to the
+      # venues would report a false negative, not a real regression.
+      - name: Verify
+        run: npm run verify
+
+  # Contract tests against the real Polymarket and Kalshi APIs. These are the
+  # ones that catch a venue silently reordering a ladder or renaming a field —
+  # the failure that makes every fill price wrong without throwing anything.
+  # Nightly rather than per-push, so a venue outage never blocks a merge.
+  live-venue-contract:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Prove book invariants against live venues
+        run: npm run invariants
+        env:
+          LIVE: '1'

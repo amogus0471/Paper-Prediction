@@ -9,7 +9,7 @@
  *
  *   node scripts/build-edge-shared.mjs
  *
- * Output: supabase/functions/_shared/ghostfill.js  (generated, do not edit)
+ * Output: supabase/functions/_shared/polyfill.js  (generated, do not edit)
  */
 import { build } from 'esbuild';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
@@ -17,7 +17,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const outFile = resolve(root, 'supabase/functions/_shared/ghostfill.js');
+const outFile = resolve(root, 'supabase/functions/_shared/polyfill.js');
 
 const entry = `
 export * from '${resolve(root, 'packages/core/src/index.ts').replace(/\\/g, '/')}';
@@ -35,7 +35,7 @@ const result = await build({
   write: false,
   legalComments: 'none',
   alias: {
-    '@ghostfill/core': resolve(root, 'packages/core/src/index.ts'),
+    '@polyfill/core': resolve(root, 'packages/core/src/index.ts'),
   },
 });
 

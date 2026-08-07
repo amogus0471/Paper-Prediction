@@ -5,16 +5,18 @@
  * network call to our backend, no row in anyone's database. The tradeoff is
  * honest and worth stating plainly — local state is editable by whoever owns
  * the machine, which is fine for practice and is exactly why the leaderboard
- * runs server-side instead (see lib/compete.ts).
+ * runs server-side instead, behind an explicit opt-in.
  *
  * The ledger invariant is the same one the Postgres path asserts:
  *   cash + costBasis(open) - realized == startingBalance
  */
 
-import type { OutcomeSide, OrderSide, SimRealism } from '@ghostfill/core';
+import type { OutcomeSide, OrderSide, SimRealism } from '@polyfill/core';
 
 export const STARTING_BALANCE = 10_000;
-const KEY = 'ghostfill.v1';
+const KEY = 'polyfill.v1';
+/** Pre-rename storage key. Read once so an existing portfolio survives the rename. */
+const LEGACY_KEY = 'ghostfill.v1';
 
 export interface StoredFill {
   price: number;
@@ -57,6 +59,8 @@ export interface StoredPosition {
   marketKey: string;
   venue: string;
   question: string;
+  /** Venue category, frozen at entry — drives the per-category calibration split. */
+  category?: string;
   outcome: OutcomeSide;
   qty: number;
   avgEntryPrice: number;
@@ -85,6 +89,19 @@ export interface StoredTxn {
   memo: string;
 }
 
+export interface WatchedMarket {
+  marketKey: string;
+  venue: string;
+  venueMarketId: string;
+  question: string;
+  category?: string;
+  addedAt: string;
+  /** Last book mid we saw, so the list renders instantly before a refresh. */
+  lastMid: number | null;
+  lastSeenAt?: string;
+  closeTime?: string;
+}
+
 export interface Settings {
   realism: SimRealism;
   soundEnabled: boolean;
@@ -100,7 +117,7 @@ export interface Settings {
   handle: string | null;
 }
 
-export interface GhostState {
+export interface LocalState {
   version: 1;
   createdAt: string;
   cash: number;
@@ -110,6 +127,7 @@ export interface GhostState {
   positions: StoredPosition[];
   orders: StoredOrder[];
   transactions: StoredTxn[];
+  watchlist: WatchedMarket[];
   settings: Settings;
 }
 
@@ -128,7 +146,7 @@ export const DEFAULT_SETTINGS: Settings = {
   handle: null,
 };
 
-export function freshState(): GhostState {
+export function freshState(): LocalState {
   const now = new Date().toISOString();
   return {
     version: 1,
@@ -139,6 +157,7 @@ export function freshState(): GhostState {
     resetCount: 0,
     positions: [],
     orders: [],
+    watchlist: [],
     transactions: [
       {
         id: crypto.randomUUID(),
@@ -146,16 +165,26 @@ export function freshState(): GhostState {
         kind: 'grant',
         amount: STARTING_BALANCE,
         balanceAfter: STARTING_BALANCE,
-        memo: 'Opening ghost balance',
+        memo: 'Opening balance',
       },
     ],
     settings: { ...DEFAULT_SETTINGS },
   };
 }
 
-export async function loadState(): Promise<GhostState> {
-  const raw = await chrome.storage.local.get(KEY);
-  const stored = raw[KEY] as GhostState | undefined;
+export async function loadState(): Promise<LocalState> {
+  const raw = await chrome.storage.local.get([KEY, LEGACY_KEY]);
+  let stored = raw[KEY] as LocalState | undefined;
+
+  // Adopt a pre-rename portfolio rather than silently handing someone a fresh
+  // P$10,000 and wiping the record they built. Runs once: the next save writes
+  // under the new key, and the old one is dropped.
+  if (!stored && raw[LEGACY_KEY]) {
+    stored = raw[LEGACY_KEY] as LocalState;
+    await chrome.storage.local.set({ [KEY]: stored });
+    await chrome.storage.local.remove(LEGACY_KEY);
+  }
+
   if (!stored || stored.version !== 1) {
     const fresh = freshState();
     await saveState(fresh);
@@ -164,10 +193,11 @@ export async function loadState(): Promise<GhostState> {
   // Merge forward so a settings key added in a later build does not read as
   // undefined on an existing install.
   stored.settings = { ...DEFAULT_SETTINGS, ...stored.settings };
+  stored.watchlist ??= [];
   return stored;
 }
 
-export async function saveState(state: GhostState): Promise<void> {
+export async function saveState(state: LocalState): Promise<void> {
   await chrome.storage.local.set({ [KEY]: state });
 }
 
@@ -177,12 +207,12 @@ export async function saveState(state: GhostState): Promise<void> {
  * chrome.storage has no transactions, and the side panel, the overlay and the
  * service worker can all write. Serialising every mutation through one chain
  * inside the single service-worker context is what stops two concurrent orders
- * from both spending the same ghost cash — the local equivalent of the
+ * from both spending the same sim cash — the local equivalent of the
  * SELECT … FOR UPDATE the Postgres path uses.
  */
 let queue: Promise<unknown> = Promise.resolve();
 
-export function mutate<T>(fn: (state: GhostState) => Promise<T> | T): Promise<T> {
+export function mutate<T>(fn: (state: LocalState) => Promise<T> | T): Promise<T> {
   const next = queue.then(async () => {
     const state = await loadState();
     const result = await fn(state);
@@ -200,7 +230,7 @@ export function marketKey(venue: string, venueMarketId: string): string {
 }
 
 export function findPosition(
-  state: GhostState,
+  state: LocalState,
   key: string,
   outcome: OutcomeSide,
 ): StoredPosition | undefined {
@@ -208,7 +238,7 @@ export function findPosition(
 }
 
 export function pushTxn(
-  state: GhostState,
+  state: LocalState,
   kind: StoredTxn['kind'],
   amount: number,
   memo: string,
@@ -235,7 +265,7 @@ export function round2(v: number): number {
 }
 
 /** Portfolio totals, derived rather than stored so they cannot drift. */
-export function summarize(state: GhostState) {
+export function summarize(state: LocalState) {
   const open = state.positions.filter((p) => p.isOpen);
   const unrealized = open.reduce((s, p) => {
     if (p.markPrice == null) return s;
@@ -274,7 +304,7 @@ export function summarize(state: GhostState) {
  * server runs it: a P&L number nobody audits is a P&L number nobody should
  * believe.
  */
-export function checkLedger(state: GhostState): { ok: boolean; drift: number } {
+export function checkLedger(state: LocalState): { ok: boolean; drift: number } {
   const summed = state.transactions.reduce((s, t) => s + t.amount, 0);
   const drift = round6(state.cash - summed);
   return { ok: Math.abs(drift) < 1e-6, drift };

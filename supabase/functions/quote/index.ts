@@ -17,7 +17,7 @@ import {
   type Side,
   type SnapshotRow,
 } from '../_shared/fill.ts';
-import { ticketMath, REALISM } from '../_shared/ghostfill.js';
+import { ticketMath, REALISM } from '../_shared/polyfill.js';
 
 Deno.serve(
   handler('quote', async (req, body, db) => {

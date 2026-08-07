@@ -13,8 +13,8 @@
  *   https://kalshi.com/markets/<series>/<subtitle>/<event-ticker>
  */
 
-import { KalshiAdapter, PolymarketAdapter } from '@ghostfill/venues';
-import type { NormalizedMarket } from '@ghostfill/venues';
+import { KalshiAdapter, PolymarketAdapter } from '@polyfill/venues';
+import type { NormalizedMarket } from '@polyfill/venues';
 import type { MarketMeta } from './engine';
 
 export interface ResolvedMarket {

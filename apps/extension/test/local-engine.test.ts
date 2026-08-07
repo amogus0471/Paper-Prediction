@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { KalshiAdapter } from '@ghostfill/venues';
-import { checkBookInvariants } from '@ghostfill/core';
+import { KalshiAdapter } from '@polyfill/venues';
+import { checkBookInvariants } from '@polyfill/core';
 
 /**
  * End-to-end test of the local fill path against a REAL live Kalshi book.
@@ -32,6 +32,17 @@ const { loadState, summarize, checkLedger, marketKey, freshState, saveState } = 
 const { buildQuote, submitOrder, settleLocal, OrderError } = await import('../src/lib/engine');
 const kalshi = new KalshiAdapter({ env: 'prod' });
 
+// This suite proves the local fill path against a REAL live Kalshi book, so
+// it is opt-in the same way packages/venues/test/live-invariants.test.ts is:
+//
+//   LIVE=1 npx vitest run test/local-engine.test.ts
+//
+// Without LIVE=1 it's skipped rather than failed, so offline dev and CI runners
+// with no outbound network don't get a false-negative build. The one always-on
+// test below (initial balance + ledger check) needs no network and stays on.
+const LIVE = process.env.LIVE === '1';
+const dLive = LIVE ? describe : describe.skip;
+
 async function liveMarket() {
   const { events } = await kalshi.listEvents(undefined, 60);
   for (const ev of events) {
@@ -47,16 +58,23 @@ async function liveMarket() {
   return null;
 }
 
-describe('local fill engine (live book)', () => {
+describe('local fill engine', () => {
   beforeEach(async () => {
     memory.clear();
     await saveState(freshState());
   });
 
-  it('starts with a G$10,000 balance and a balanced ledger', async () => {
+  it('starts with a P$10,000 balance and a balanced ledger', async () => {
     const state = await loadState();
     expect(summarize(state).equity).toBe(10000);
     expect(checkLedger(state).ok).toBe(true);
+  });
+});
+
+dLive('local fill engine (live Kalshi book)', () => {
+  beforeEach(async () => {
+    memory.clear();
+    await saveState(freshState());
   });
 
   it(
@@ -199,7 +217,7 @@ describe('local fill engine (live book)', () => {
     120000,
   );
 
-  it('refuses to spend more ghost cash than exists', async () => {
+  it('refuses to spend more sim cash than exists', async () => {
     const live = await liveMarket();
     if (!live) return;
 
@@ -227,7 +245,7 @@ describe('local fill engine (live book)', () => {
     });
 
     await expect(submitOrder({ meta, quote, fillBook: live.book })).rejects.toThrow(
-      /Not enough ghost cash/,
+      /Not enough sim cash/,
     );
   }, 120000);
 });

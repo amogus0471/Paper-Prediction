@@ -126,3 +126,43 @@ button.action.danger { color: var(--no); border-color: rgba(255, 77, 106, 0.35);
 .bss { font-size: 26px; font-weight: 700; }
 .progress { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; margin-top: 6px; }
 .progress > div { height: 100%; background: var(--brand); }
+
+/* ── added for Record / Watch / Readiness ─────────────────────────────────── */
+
+h3.section {
+  font-size: 11px; color: var(--muted); text-transform: uppercase;
+  letter-spacing: 0.04em; margin: 14px 0 7px; font-weight: 600;
+}
+
+.card.good   { border-left-color: var(--yes); }
+.card.danger { border-left-color: var(--no); }
+
+.insight { font-size: 13px; line-height: 1.45; }
+.verdict { font-size: 13px; font-weight: 600; line-height: 1.4; margin-bottom: 6px; }
+.verdict.muted { color: var(--muted); font-weight: 500; }
+.muted { color: var(--muted); }
+.dim, .line.dim { color: var(--dim); }
+
+/* The Readiness Check's closing line — the sentence the product exists to earn. */
+.bottomline {
+  margin-top: 9px; padding: 9px 10px; border-radius: 6px;
+  background: var(--bg); border: 1px solid var(--border);
+  font-size: 12px; line-height: 1.5;
+}
+.card.danger .bottomline { border-color: rgba(255, 77, 106, 0.35); }
+.card.good   .bottomline { border-color: rgba(0, 209, 143, 0.3); }
+
+.calchart { width: 100%; max-width: 220px; height: auto; display: block; margin: 4px auto 8px; }
+
+.bigprice { font-size: 15px; font-weight: 700; }
+
+.linkbtn {
+  background: none; border: none; color: var(--muted); font: inherit; font-size: 11px;
+  cursor: pointer; padding: 0; text-decoration: underline;
+}
+.linkbtn:hover { color: var(--text); }
+
+.btnrow { display: flex; gap: 6px; }
+button.action.small { font-size: 11px; padding: 6px; }
+
+.empty .note { margin-top: 10px; max-width: 260px; margin-inline: auto; }

@@ -21,13 +21,21 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      '@ghostfill/core': resolve(root, '../../packages/core/src/index.ts'),
-      '@ghostfill/venues': resolve(root, '../../packages/venues/src/index.ts'),
+      '@polyfill/core': resolve(root, '../../packages/core/src/index.ts'),
+      '@polyfill/venues': resolve(root, '../../packages/venues/src/index.ts'),
     },
   },
   build: {
     outDir: 'dist',
-    emptyOutDir: true,
+    // false, not true: some filesystems (notably network/synced mounts) refuse
+    // to unlink files that a previous process still has a handle on, and Vite's
+    // emptyOutDir does a full rimraf before every build. Every file we emit is
+    // written with a fixed name (see entryFileNames/chunkFileNames/assetFileNames
+    // below) and overwritten in place, and build.mjs verifies the final output
+    // against the manifest, so a stale file from a renamed/removed source is the
+    // only real risk here — acceptable, and easy to spot (`git status` on dist
+    // if it's ever tracked, or just re-run with dist/ deleted manually).
+    emptyOutDir: false,
     target: 'chrome116',
     // Readable output makes a Web Store review, and your own debugging, easier.
     minify: false,

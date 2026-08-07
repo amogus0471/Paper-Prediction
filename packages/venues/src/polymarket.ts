@@ -7,7 +7,7 @@ import {
   type Level,
   type NormalizedBook,
   type OrderSide,
-} from '@ghostfill/core';
+} from '@polyfill/core';
 import { dollarsStringToCents, num, parseDate, parseJsonArray, sizeStringToQty } from './decimal-parse';
 import { mapConcurrent, venueFetch } from './http';
 import type {
@@ -28,7 +28,7 @@ const CLOB = 'https://clob.polymarket.com';
  * Polymarket adapter.
  *
  * Every read endpoint is public — no API key, no wallet, no auth of any kind.
- * Only placing a real order needs EIP-712 headers, and Ghostfill never places
+ * Only placing a real order needs EIP-712 headers, and Polyfill never places
  * one, so there is no wallet anywhere in this codebase.
  *
  * Two things about this API will silently corrupt fills if you get them wrong:
@@ -264,7 +264,7 @@ function seriesKeyFromTicker(ticker: string): string {
 }
 
 /**
- * Map Polymarket tags onto Ghostfill's own category set. Categories drive the
+ * Map Polymarket tags onto Polyfill's own category set. Categories drive the
  * per-category calibration breakdown, so they need to be stable across venues.
  */
 function categorize(e: RawEvent): string {

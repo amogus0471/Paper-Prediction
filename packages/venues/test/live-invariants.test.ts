@@ -7,7 +7,7 @@ import {
   isSortedBestFirst,
   midPrice,
   walkBook,
-} from '@ghostfill/core';
+} from '@polyfill/core';
 import { KalshiAdapter, PolymarketAdapter } from '../src/index';
 import type { NormalizedMarket, VenueAdapter } from '../src/types';
 

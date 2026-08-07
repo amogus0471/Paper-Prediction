@@ -13,8 +13,10 @@
 import { buildQuote, submitOrder, markPositions, settleLocal, OrderError } from '../lib/engine';
 import { fetchBook, resolveUrl, searchMarkets, trending } from '../lib/resolve';
 import { loadState, mutate, freshState, saveState, marketKey } from '../lib/store';
+import { buildRecord } from '../lib/record';
+import { dueForRefresh, metaOf, noteMid, toggleWatch } from '../lib/watchlist';
 import type { Request, Response } from '../lib/messages';
-import { REALISM } from '@ghostfill/core';
+import { REALISM, midPrice } from '@polyfill/core';
 
 chrome.runtime.onInstalled.addListener(async () => {
   // Touch the store so a fresh install has a portfolio before the first render.
@@ -29,7 +31,13 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'settle-check') void settlementSweep();
+  if (alarm.name === 'settle-check') {
+    void settlementSweep();
+    // Piggyback the watchlist refresh on the same wake-up rather than adding a
+    // second alarm — the service worker is already spun up, and this keeps the
+    // background cost of a watched market close to zero.
+    void refreshWatchlist();
+  }
 });
 
 chrome.runtime.onMessage.addListener((req: Request, _sender, sendResponse) => {
@@ -127,6 +135,15 @@ async function handle(req: Request): Promise<unknown> {
     case 'SETTLE_CHECK':
       return settlementSweep();
 
+    case 'TOGGLE_WATCH':
+      return { watched: await toggleWatch(req.meta, req.mid) };
+
+    case 'REFRESH_WATCHLIST':
+      return refreshWatchlist();
+
+    case 'GET_RECORD':
+      return buildRecord(await loadState());
+
     default:
       throw new Error(`Unknown request: ${(req as { type: string }).type}`);
   }
@@ -134,6 +151,33 @@ async function handle(req: Request): Promise<unknown> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Refresh the stalest watched markets — the client-side equivalent of the
+ * server's hot tier.
+ *
+ * Bounded by `dueForRefresh`, so this never fans out past a handful of requests
+ * no matter how long the list is. Failures are swallowed per-market: one dead
+ * ticker must not stop the rest of the sweep.
+ */
+async function refreshWatchlist(): Promise<{ refreshed: number }> {
+  const state = await loadState();
+  const due = dueForRefresh(state);
+  if (due.length === 0) return { refreshed: 0 };
+
+  let refreshed = 0;
+  for (const w of due) {
+    try {
+      const { book } = await fetchBook(metaOf(w));
+      await noteMid(w.marketKey, midPrice(book.yes));
+      await markPositions(w.marketKey, book);
+      refreshed++;
+    } catch {
+      // Leave lastSeenAt alone so it stays at the front of the queue.
+    }
+  }
+  return { refreshed };
 }
 
 /**
@@ -170,7 +214,7 @@ async function settlementSweep(): Promise<{ checked: number; settled: number }> 
     chrome.notifications?.create?.({
       type: 'basic',
       iconUrl: 'icons/icon128.png',
-      title: 'Ghostfill — market settled',
+      title: 'Polyfill — market settled',
       message: `${settled} position${settled === 1 ? '' : 's'} resolved. Open the panel to see the result.`,
     });
   }

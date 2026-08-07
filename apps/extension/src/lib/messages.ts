@@ -1,8 +1,8 @@
 /** The message contract between the overlay, the side panel and the service worker. */
 
-import type { NormalizedBook, OrderSide, OutcomeSide } from '@ghostfill/core';
+import type { NormalizedBook, OrderSide, OutcomeSide } from '@polyfill/core';
 import type { MarketMeta, QuoteResult } from './engine';
-import type { GhostState, Settings, StoredOrder } from './store';
+import type { LocalState, Settings, StoredOrder } from './store';
 
 export type Request =
   | { type: 'PING' }
@@ -23,7 +23,10 @@ export type Request =
       qty?: number;
     }
   | { type: 'SUBMIT'; meta: MarketMeta; quote: QuoteResult }
-  | { type: 'SETTLE_CHECK' };
+  | { type: 'SETTLE_CHECK' }
+  | { type: 'TOGGLE_WATCH'; meta: MarketMeta; mid: number | null }
+  | { type: 'REFRESH_WATCHLIST' }
+  | { type: 'GET_RECORD' };
 
 export type Response<T = unknown> =
   | { ok: true; data: T }
@@ -47,13 +50,13 @@ export interface BookResult {
 
 export interface SubmitResult {
   order: StoredOrder;
-  state: GhostState;
+  state: LocalState;
 }
 
 /** Typed wrapper so callers get a rejected promise instead of an `ok:false`. */
 export async function send<T>(req: Request): Promise<T> {
   const res = (await chrome.runtime.sendMessage(req)) as Response<T> | undefined;
-  if (!res) throw new Error('No response from Ghostfill background worker.');
+  if (!res) throw new Error('No response from Polyfill background worker.');
   if (!res.ok) {
     const err = new Error(res.message) as Error & { code?: string; detail?: string };
     err.code = res.error;

@@ -17,9 +17,10 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "check:secrets": "node scripts/check-secrets.mjs",
-    "invariants": "npm run test --workspace @ghostfill/venues -- test/live-invariants.test.ts",
+    "invariants": "npm test --workspace @polyfill/venues -- test/live-invariants.test.ts",
     "build:edge": "node scripts/build-edge-shared.mjs",
-    "build:functions": "node scripts/build-functions.mjs"
+    "build:functions": "node scripts/build-functions.mjs",
+    "verify": "npm run check:secrets && npm run typecheck --workspaces --if-present && npm test --workspaces --if-present && npm run build --workspace @polyfill/extension"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

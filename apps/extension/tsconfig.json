@@ -6,8 +6,8 @@
     "types": ["chrome", "node"],
     "baseUrl": ".",
     "paths": {
-      "@ghostfill/core": ["../../packages/core/src/index.ts"],
-      "@ghostfill/venues": ["../../packages/venues/src/index.ts"]
+      "@polyfill/core": ["../../packages/core/src/index.ts"],
+      "@polyfill/venues": ["../../packages/venues/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts"]

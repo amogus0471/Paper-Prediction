@@ -99,7 +99,7 @@ export type FeeModel =
 export interface MarketRules {
   tickCents: number;
   minOrderSize: number;
-  /** Ghostfill's own guardrail: max share of visible depth a single order may take. */
+  /** Polyfill's own guardrail: max share of visible depth a single order may take. */
   maxDepthFraction: number;
 }
 

@@ -1,3 +1,4 @@
+import { BRAND } from './brand';
 import { roundTo } from './decimal';
 
 /**
@@ -15,21 +16,21 @@ export function formatCents(cents: number | null | undefined, dp?: number): stri
   return `${cents.toFixed(places)}¢`;
 }
 
-/** Ghost dollars carry a G$ prefix so they can never be mistaken for real money. */
-export function formatGhostDollars(usd: number | null | undefined, dp = 2): string {
+/** Sim dollars carry a P$ prefix so they can never be mistaken for real money. */
+export function formatSimDollars(usd: number | null | undefined, dp = 2): string {
   if (usd == null || !Number.isFinite(usd)) return '--';
   const sign = usd < 0 ? '-' : '';
-  return `${sign}G$${Math.abs(usd).toLocaleString('en-US', {
+  return `${sign}${BRAND.currencySymbol}${Math.abs(usd).toLocaleString('en-US', {
     minimumFractionDigits: dp,
     maximumFractionDigits: dp,
   })}`;
 }
 
 /** Signed money, for P&L. Always shows the sign so gains and losses scan fast. */
-export function formatSignedGhostDollars(usd: number | null | undefined, dp = 2): string {
+export function formatSignedSimDollars(usd: number | null | undefined, dp = 2): string {
   if (usd == null || !Number.isFinite(usd)) return '--';
   const sign = usd > 0 ? '+' : usd < 0 ? '-' : '';
-  return `${sign}G$${Math.abs(usd).toLocaleString('en-US', {
+  return `${sign}${BRAND.currencySymbol}${Math.abs(usd).toLocaleString('en-US', {
     minimumFractionDigits: dp,
     maximumFractionDigits: dp,
   })}`;
@@ -129,7 +130,7 @@ export function unitNoun(venue: string, qty = 2): string {
 
 /** Copy for every rejection code. Never ship a generic "order failed". */
 export const REJECT_COPY: Record<string, string> = {
-  insufficient_funds: 'Not enough ghost cash for this order.',
+  insufficient_funds: 'Not enough sim cash for this order.',
   market_closed: 'This market has closed.',
   stale_book: "We've lost the live book for this market. Try again shortly.",
   quote_expired: 'Your quote expired. Refreshing…',
@@ -142,6 +143,7 @@ export const REJECT_COPY: Record<string, string> = {
   position_limit:
     'This would put more than 20% of your bankroll in one market. Position sizing is the point.',
   no_liquidity: 'There is no visible liquidity on that side of the book right now.',
+  insufficient_position: 'You do not hold enough of this outcome to sell.',
   resolution_lockout:
     'This market is already priced as a near-certainty. Trading it now would be front-running the result, not forecasting it.',
   duplicate: 'Order already submitted.',

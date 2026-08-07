@@ -31,3 +31,7 @@ scripts/.fixtures-live/
 
 # Built extension — regenerate with: npm run build --workspace @ghostfill/extension
 apps/extension/dist/
+
+# Vitest writes these next to the config on every run
+**/vitest.config.ts.timestamp-*.mjs
+**/vite.config.ts.timestamp-*.mjs

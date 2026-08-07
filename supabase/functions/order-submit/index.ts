@@ -1,4 +1,4 @@
-// order-submit — turn a live quote into an auditable ghost fill.
+// order-submit — turn a live quote into an auditable paper fill.
 //
 // The important thing this function does is REFUSE to fill against the book the
 // user quoted from. It selects a snapshot taken at least `latency_ms` after the
@@ -21,7 +21,7 @@ import {
   type Side,
   type SnapshotRow,
 } from '../_shared/fill.ts';
-import { REALISM, checkBookInvariants, createAdapters, midPrice } from '../_shared/ghostfill.js';
+import { REALISM, checkBookInvariants, createAdapters, midPrice } from '../_shared/polyfill.js';
 
 const SNAPSHOT_COLS =
   'id, market_id, captured_at, yes_bids, yes_asks, no_bids, no_asks, yes_mid';

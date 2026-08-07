@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
-import { checkBookInvariants, isSortedBestFirst } from '@ghostfill/core';
+import { checkBookInvariants, isSortedBestFirst } from '@polyfill/core';
 import { normalizeKalshiBook } from '../src/kalshi';
 import type { RawOrderbookResponse } from '../src/kalshi';
 import { dollarsStringToCents, sizeStringToQty, parseJsonArray, num } from '../src/decimal-parse';

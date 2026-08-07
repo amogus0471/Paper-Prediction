@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkBookInvariants, isSortedBestFirst, walkBook } from '@ghostfill/core';
+import { checkBookInvariants, isSortedBestFirst, walkBook } from '@polyfill/core';
 import { normalizeLadder } from '../src/polymarket';
 
 /**

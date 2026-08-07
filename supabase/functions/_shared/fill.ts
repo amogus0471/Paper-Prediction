@@ -18,7 +18,7 @@ import {
   type Ladder,
   type Level,
   type WalkResult,
-} from './ghostfill.js';
+} from './polyfill.js';
 import { ApiError } from './api.ts';
 
 export type Realism = 'instant' | 'realistic' | 'brutal';
