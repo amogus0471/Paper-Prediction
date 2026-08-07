@@ -70,7 +70,8 @@ export interface NormalizedMarket {
  */
 export type BookRef =
   | { venue: 'polymarket'; yesTokenId: string; noTokenId: string }
-  | { venue: 'kalshi'; ticker: string };
+  | { venue: 'kalshi'; ticker: string }
+  | { venue: 'hyperliquid'; yesCoin: string; noCoin: string };
 
 export interface Candle {
   ts: Date;

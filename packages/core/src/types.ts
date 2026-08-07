@@ -1,6 +1,6 @@
 /** Shared vocabulary. Everything downstream of a venue adapter speaks only this. */
 
-export type VenueCode = 'polymarket' | 'kalshi';
+export type VenueCode = 'polymarket' | 'kalshi' | 'hyperliquid';
 export type OutcomeSide = 'yes' | 'no';
 export type OrderSide = 'buy' | 'sell';
 export type OrderType = 'market' | 'limit';
