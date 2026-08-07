@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Paper Predictions — Practise Prediction Markets",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Practise trading real Polymarket, Kalshi, Hyperliquid and Limitless markets with simulated money. Fills price against the real order book. No real money, ever.",
   "minimum_chrome_version": "116",
   "permissions": [

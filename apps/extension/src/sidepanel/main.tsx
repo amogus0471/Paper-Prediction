@@ -22,7 +22,6 @@ import {
   type StoredPosition,
 } from '../lib/store';
 import { Leaderboard } from './Leaderboard';
-import { Onboarding } from './Onboarding';
 import { ALERT_LABELS, addAlert, alertsFor, describeAlert, removeAlert, type AlertKind } from '../lib/alerts';
 import './styles.css';
 
@@ -81,18 +80,6 @@ function App() {
   }
 
   const s = summarize(state);
-
-  // Shown once. Deliberately not a modal over the app: a first-run tour you
-  // cannot leave is worse than no tour.
-  if (!state.settings.onboardedAt) {
-    return (
-      <div className="app">
-        <main>
-          <Onboarding state={state} onDone={refresh} />
-        </main>
-      </div>
-    );
-  }
 
   return (
     <div className="app">

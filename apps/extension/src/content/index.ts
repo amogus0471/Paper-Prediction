@@ -158,10 +158,17 @@ ${ODOMETER_CSS}
   width: var(--w, 300px);
   background: linear-gradient(160deg, rgba(21,26,35,.98), rgba(13,16,23,.985));
   backdrop-filter: blur(16px);
-  border: 1px solid var(--line); border-radius: 18px; overflow: hidden;
+  border: 1px solid var(--line); border-radius: 18px;
   box-shadow: 0 20px 60px rgba(0,0,0,.65);
   animation: rise .22s cubic-bezier(.2,.8,.2,1);
   position: relative;
+  /* NOT overflow:hidden.
+     That clipped the outcome dropdown to the card's own height, which is why
+     a 40-outcome event appeared to have four and could not be scrolled: the
+     list was the full length and scrollable all along, you were looking at it
+     through a letterbox. The card's own background is clipped by border-radius
+     without this, and no child paints into the corners. */
+  overflow: visible;
 }
 @keyframes rise { from { opacity: 0; transform: translateY(10px) scale(.98); } }
 
@@ -274,11 +281,25 @@ ${ODOMETER_CSS}
   border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px;
   color: #E6EAF2; font: inherit; font-size: 11.5px; outline: none; }
 .dd-search:focus { border-color: var(--blue); }
-.dd-list { max-height: 320px; }
+/* Keep the search reachable while scrolling a long list — on a 40-outcome
+   event, scrolling away from the one control that filters it is backwards. */
+.dd-search { position: sticky; top: 0; z-index: 1; }
+.dd-list::before { content: ''; position: sticky; top: 0; display: block;
+  height: 8px; background: #10141C; margin: -8px 0 0; }
+
+/* As tall as the screen allows rather than a fixed guess: the whole point is
+   to see as many outcomes at once as there is room for. */
+.dd-list { max-height: min(58vh, 440px); }
 .dd-item .pc { font-size: 13px; font-weight: 700; }
 .dd-list { overscroll-behavior: contain; }
 .dd-list::-webkit-scrollbar { width: 7px; }
 .dd-list::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+/* Open upward when the panel is sitting low enough that downward would run off
+   the bottom of the window. */
+.dd.up .dd-list { top: auto; bottom: calc(100% + 5px); transform: translateY(6px); }
+.dd.up.open .dd-list { transform: none; }
+.dd-count { padding: 6px 10px 7px; font-size: 10px; color: var(--mute);
+  border-bottom: 1px solid rgba(34,43,56,.6); letter-spacing: .03em; }
 
 .sides { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .side { border: 1px solid var(--line); background: var(--card); border-radius: 12px;
@@ -315,6 +336,11 @@ ${ODOMETER_CSS}
 .r.big > span:last-child { color: var(--up); font-weight: 800; font-size: 17px; }
 .r.lead > span:last-child { font-weight: 800; font-size: 16px; color: #fff; }
 .warn { color: #F59E0B; }
+/* The "can't price this" reason is a sentence, not a figure — let it wrap
+   rather than run off the edge or squash the label next to it. */
+.r.warn { align-items: flex-start; gap: 10px; }
+.r.warn > span:last-child { text-align: right; white-space: normal;
+  line-height: 1.35; max-width: 62%; }
 .muted { color: var(--mute); font-size: 11px; }
 
 .extra { display: grid; gap: 4px; }
@@ -605,13 +631,31 @@ function buildPanel(): void {
     search.type = 'text';
     search.placeholder = 'Search outcomes…';
     search.addEventListener('click', (e) => e.stopPropagation());
+
+    // Says how many outcomes there are, and how many the search is hiding.
+    // Without it a clipped or filtered list is indistinguishable from a short
+    // one, which is exactly the confusion this dropdown caused.
+    const count = el('div', 'dd-count');
+    const setCount = (shown: number) => {
+      const total = market!.siblings.length;
+      count.textContent =
+        shown === total
+          ? `${total} outcome${total === 1 ? '' : 's'} — scroll for more`
+          : `${shown} of ${total} outcomes`;
+    };
+
     search.addEventListener('input', () => {
       const q = search.value.toLowerCase().trim();
+      let shown = 0;
       for (const row of Array.from(list.querySelectorAll('.dd-item')) as HTMLElement[]) {
-        row.style.display = !q || (row.dataset.q ?? '').includes(q) ? '' : 'none';
+        const hit = !q || (row.dataset.q ?? '').includes(q);
+        row.style.display = hit ? '' : 'none';
+        if (hit) shown++;
       }
+      setCount(shown);
     });
-    list.appendChild(search);
+    list.append(search, count);
+    setCount(market.siblings.length);
 
     for (const s of market.siblings) {
       const item = el('div', 'dd-item');
@@ -648,6 +692,7 @@ function buildPanel(): void {
         meta = s.meta;
         picker!.classList.remove('open');
         quote = null;
+        quoteError = null;
         structureKey = ''; // question + siblings change: rebuild once, then patch
         rebuild();
         void refreshBook();
@@ -658,7 +703,23 @@ function buildPanel(): void {
 
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      picker!.classList.toggle('open');
+      const opening = !picker!.classList.contains('open');
+      if (opening) {
+        // The popup is draggable, so it can be sitting anywhere. Decide which
+        // way to open from where the button actually is, not from a guess.
+        const r = btn.getBoundingClientRect();
+        const below = innerHeight - r.bottom;
+        picker!.classList.toggle('up', below < 260 && r.top > below);
+        // Reset the filter each time, so reopening never shows a subset of the
+        // outcomes with no visible reason why.
+        search.value = '';
+        for (const row of Array.from(list.querySelectorAll('.dd-item')) as HTMLElement[]) {
+          row.style.display = '';
+        }
+        setCount(market!.siblings.length);
+        list.scrollTop = 0;
+      }
+      picker!.classList.toggle('open', opening);
     });
     picker.append(btn, list);
   }
@@ -854,7 +915,9 @@ function paint(): void {
           ? ([['Partial fill', 'book ran out', 'warn']] as [string, string, string][])
           : []),
       ]
-    : [];
+    : quoteError
+      ? ([['Can’t price this', quoteError, 'warn']] as [string, string, string][])
+      : [];
   syncRows(n.ticket, rows);
 
   const extras: [string, string, string?][] = [];
@@ -1019,11 +1082,16 @@ function resize(e: MouseEvent, card: HTMLElement): void {
  * row leave several requests in flight at once, which earns more rate limiting,
  * which makes them slower still. Skipping a tick is free; piling on is not.
  */
-let bookInFlight = false;
+let bookInFlightSince = 0;
 
 async function refreshBook(): Promise<void> {
-  if (!meta || collapsed || bookInFlight) return;
-  bookInFlight = true;
+  // The guard expires. A flag with no deadline is a flag that can wedge: if a
+  // message to the worker never settles, "already in flight" stays true and
+  // every later tick returns immediately, so the price on screen freezes for
+  // good with nothing to say why. Past the deadline we start a new one.
+  const inFlight = bookInFlightSince > 0 && Date.now() - bookInFlightSince < POLL_MS * 3;
+  if (!meta || collapsed || inFlight) return;
+  bookInFlightSince = Date.now();
   try {
     const { book } = await send<{
       book: { yes: { bids: [number, number][]; asks: [number, number][] } };
@@ -1048,7 +1116,7 @@ async function refreshBook(): Promise<void> {
     live.misses++;
     paintStaleness();
   } finally {
-    bookInFlight = false;
+    bookInFlightSince = 0;
   }
 }
 
@@ -1090,34 +1158,85 @@ function startPolling(): void {
     if (document.hidden) return; // never burn API budget in a background tab
     void refreshBook();
     void refreshPnl();
-    if (quote && amount > 0) requestQuote();
+    // Re-quote whenever there is a size, NOT only when a quote already exists.
+    //
+    // The old `if (quote && …)` was a one-way door. Any failed quote — and a
+    // successful order, which clears it — set `quote` to null, and from then on
+    // this line never fired again: no requote, Buy stayed disabled, and the
+    // ticket sat frozen until the user retyped the amount. It also meant a
+    // quote that had gone stale could never renew itself, which is why placing
+    // an order came back "your quote expired".
+    if (amount > 0 && !busy) requestQuote(true);
   }, POLL_MS) as unknown as number;
 }
 
-function requestQuote(): void {
+/**
+ * Why the last quote failed, shown in the ticket instead of as a toast.
+ *
+ * Now that the poll re-quotes every second, a standing problem — a size bigger
+ * than the book, a market that just closed — would pop a toast every few
+ * seconds forever. The reason belongs where the numbers would have been: it
+ * stays visible, explains the disabled Buy button, and says itself once.
+ */
+let quoteError: string | null = null;
+
+/**
+ * Price the current ticket. Resolves with the quote so callers that need one
+ * *now* — placing an order — can await it rather than hoping the poll has run.
+ *
+ * `silent` is for the poll: it updates the inline reason but never interrupts.
+ */
+async function fetchQuote(opts: { silent?: boolean } = {}): Promise<QuoteResult | null> {
+  if (!meta || !(amount > 0)) {
+    quote = null;
+    quoteError = null;
+    paint();
+    return null;
+  }
+  try {
+    quote = await send<QuoteResult>({
+      type: 'QUOTE',
+      meta,
+      side: 'buy',
+      outcome,
+      notional: amount,
+    });
+    quoteError = null;
+    paint();
+    return quote;
+  } catch (e) {
+    const err = e as Error & { code?: string; detail?: string };
+    quote = null;
+    quoteError = friendlyError(err.code, err.message, err.detail);
+    paint();
+    if (!opts.silent) showError(err);
+    return null;
+  }
+}
+
+function requestQuote(silent = false): void {
   clearTimeout(quoteTimer);
   if (!meta || !(amount > 0)) {
     quote = null;
+    quoteError = null;
     paint();
     return;
   }
-  quoteTimer = setTimeout(async () => {
-    try {
-      quote = await send<QuoteResult>({
-        type: 'QUOTE',
-        meta: meta!,
-        side: 'buy',
-        outcome,
-        notional: amount,
-      });
-      paint();
-    } catch (e) {
-      quote = null;
-      paint();
-      showError(e as Error);
-    }
-  }, 200) as unknown as number;
+  // Debounced so typing a size does not fire a quote per keystroke.
+  quoteTimer = setTimeout(() => void fetchQuote({ silent }), 200) as unknown as number;
 }
+
+/**
+ * How old a quote may be before placing on it is asking for a rejection.
+ *
+ * The engine expires quotes at 10s, on purpose: a fill has to be priced off
+ * something recent. But the user pressing Buy is not the moment to discover
+ * that — so past this age we quietly fetch a fresh one first and place on
+ * that. Nothing is loosened by this. The new quote walks a new book, and the
+ * fill still walks a book fetched after it, with the same 2% price-moved
+ * guard. It only removes a failure the user could do nothing about.
+ */
+const REQUOTE_BEFORE_PLACE_MS = 3500;
 
 let lastErrorAt = 0;
 function showError(e: Error & { code?: string; detail?: string }): void {
@@ -1226,6 +1345,18 @@ async function place(): Promise<void> {
   const done = toast('Placing your order…', 'pending');
 
   try {
+    // Refresh a quote that is about to expire, instead of submitting it and
+    // being told no. The debounced poll can leave one a few seconds old, and
+    // the user pressing Buy meant "buy at roughly what I see" — not "buy only
+    // if the last poll happened to land recently".
+    const age = Date.now() - new Date(quote.quotedAt).getTime();
+    if (age > REQUOTE_BEFORE_PLACE_MS) {
+      clearTimeout(quoteTimer);
+      const fresh = await fetchQuote();
+      if (!fresh) return; // fetchQuote already surfaced why
+      quote = fresh;
+    }
+
     const { order } = await send<{
       order: { id: string; status: string; qtyFilled: number; avgPrice: number };
     }>(
@@ -1292,6 +1423,7 @@ function unmount(): void {
   pn = null;
   structureKey = '';
   quote = null;
+  quoteError = null;
 }
 
 async function sync(): Promise<void> {
@@ -1337,6 +1469,7 @@ async function sync(): Promise<void> {
   if (changed) {
     meta = next.meta;
     quote = null;
+    quoteError = null;
     live = { yes: null, no: null, spread: null, at: null, misses: 0 };
     try {
       watched = await send<boolean>({ type: 'WATCH_HAS', meta: next.meta });

@@ -59,9 +59,51 @@ export interface SubmitResult {
   state: LocalState;
 }
 
+/**
+ * Requests that are safe to abandon and ask again.
+ *
+ * A message to a service worker can hang rather than reject — MV3 tears the
+ * worker down when it decides the worker is idle, and a message in flight at
+ * that moment sometimes never settles at all. Anything guarding itself with an
+ * "already in flight" flag then waits forever, which is how a once-a-second
+ * poll stops dead and the price on screen quietly stops being a price.
+ *
+ * Only READS get a deadline. Re-asking for a book costs nothing. SUBMIT and
+ * the other mutations deliberately wait as long as they need to: timing out on
+ * the client while the worker goes on to book the order would show a failure
+ * for a trade that actually happened, which is far worse than waiting.
+ */
+const READ_TIMEOUT_MS = 12_000;
+const RETRYABLE: ReadonlySet<Request['type']> = new Set([
+  'PING',
+  'GET_BOOK',
+  'QUOTE',
+  'GET_STATE',
+  'GET_SETTINGS',
+  'GET_SUMMARY',
+  'GET_RECORD',
+  'TRENDING',
+  'SEARCH_MARKETS',
+  'WATCH_HAS',
+  'RESOLVE_URL',
+]);
+
 /** Typed wrapper so callers get a rejected promise instead of an `ok:false`. */
 export async function send<T>(req: Request): Promise<T> {
-  const res = (await chrome.runtime.sendMessage(req)) as Response<T> | undefined;
+  const call = chrome.runtime.sendMessage(req) as Promise<Response<T> | undefined>;
+
+  const res = RETRYABLE.has(req.type)
+    ? await Promise.race([
+        call,
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`${req.type} timed out — the background worker did not answer.`)),
+            READ_TIMEOUT_MS,
+          ),
+        ),
+      ])
+    : await call;
+
   if (!res) throw new Error('No response from the background worker.');
   if (!res.ok) {
     const err = new Error(res.message) as Error & { code?: string; detail?: string };

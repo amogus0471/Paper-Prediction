@@ -150,7 +150,6 @@ export interface Settings {
    */
   pinnedMarket: { meta: unknown; url: string } | null;
   /** Set once the alerts walkthrough has been completed or skipped. */
-  onboardedAt: string | null;
   /**
    * Enforce the 5%-of-visible-depth cap.
    *
@@ -217,7 +216,6 @@ export const DEFAULT_SETTINGS: Settings = {
   doubleTapToPlace: false,
   turboMode: false,
   pinnedMarket: null,
-  onboardedAt: null,
   enforceDepthCap: false,
   resolutionLockout: false,
   quickMode: 'dollars',
